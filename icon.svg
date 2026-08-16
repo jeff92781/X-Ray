@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#131c26"/>
+      <stop offset="1" stop-color="#0a1119"/>
+    </linearGradient>
+    <linearGradient id="tinta" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="feixe" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#5eead4" stop-opacity="0"/>
+      <stop offset=".5"  stop-color="#5eead4" stop-opacity=".9"/>
+      <stop offset="1"   stop-color="#5eead4" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="114" fill="url(#fundo)"/>
+
+  <!-- caixa vista em perspectiva: o objeto examinado -->
+  <g fill="none" stroke="url(#tinta)" stroke-width="26"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 96 407 182v148L256 416 105 330V182z"/>
+    <!-- arestas internas, mais fracas: o que se enxerga "por dentro" -->
+    <path d="M105 182 256 268 407 182" opacity=".38"/>
+    <path d="M256 268v148" opacity=".38"/>
+  </g>
+
+  <!-- feixe do exame atravessando a caixa -->
+  <rect x="86" y="243" width="340" height="12" rx="6" fill="url(#feixe)"/>
+
+  <!-- lupa: o ato de investigar -->
+  <g fill="none" stroke="#0a1119" stroke-width="46" stroke-linecap="round">
+    <circle cx="222" cy="232" r="76"/>
+    <path d="m276 288 74 74"/>
+  </g>
+  <g fill="none" stroke="url(#tinta)" stroke-width="26" stroke-linecap="round">
+    <circle cx="222" cy="232" r="76"/>
+    <path d="m276 288 74 74"/>
+  </g>
+</svg>
