@@ -1,0 +1,2144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X-RAY — Estoque</title>
+<link rel="icon" type="image/svg+xml" href="icones/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icones/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icones/favicon-16.png">
+<link rel="apple-touch-icon" href="icones/icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0d1117">
+<meta name="description" content="Monitoramento, auditoria e rastreabilidade de estoque">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="X-Ray">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0d1117; --bg2:#131a23; --panel:#161d27; --panel2:#1c2530; --line:#242e3b;
+  --tx:#e6edf3; --tx2:#8b98a9; --tx3:#5d6b7d;
+  --ac:#4a9eff; --ac2:#1f6feb;
+  --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#a371f7;
+  --r:10px; --sh:0 4px 16px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--ac);text-decoration:none}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:#2b3644;border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:#3a4757}
+
+/* ---------- LOGIN ---------- */
+#login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:
+  radial-gradient(1200px 600px at 20% -10%, #16283f 0%, transparent 60%),
+  radial-gradient(900px 500px at 90% 110%, #1b2a1f 0%, transparent 55%), var(--bg);z-index:100}
+.login-card{width:400px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:36px 34px;box-shadow:var(--sh)}
+.login-card h1{font-size:21px;letter-spacing:-.4px;margin-bottom:4px}
+.login-card .sub{color:var(--tx2);font-size:13px;margin-bottom:26px}
+.fld{margin-bottom:14px}
+.fld label{display:block;font-size:12px;color:var(--tx2);margin-bottom:6px;font-weight:500}
+.fld input,.fld select,.fld textarea{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;outline:none;transition:border-color .15s}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:var(--ac)}
+.btn{background:var(--ac2);border:none;border-radius:8px;padding:10px 18px;font-weight:600;cursor:pointer;transition:filter .15s;color:#fff}
+.btn:hover{filter:brightness(1.15)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.w{width:100%}
+.btn.gh{background:transparent;border:1px solid var(--line);color:var(--tx)}
+.btn.gh:hover{background:var(--panel2);filter:none}
+.btn.sm{padding:6px 12px;font-size:13px}
+.btn.dg{background:var(--bad)}
+.msg{padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:14px;display:none}
+.msg.err{background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#ffb3ae;display:block}
+.msg.ok{background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35);color:#8ce39a;display:block}
+
+/* ---------- SHELL ---------- */
+#app{display:none;min-height:100vh}
+.side{position:fixed;left:0;top:0;bottom:0;width:230px;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:20}
+.brand{padding:18px 16px 15px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:11px;
+  cursor:pointer;transition:background .15s;user-select:none}
+.brand:hover{background:var(--panel)}
+.brand:hover svg{color:var(--ac)}
+.brand svg{width:29px;height:29px;flex:none;color:var(--tx2);transition:color .15s}
+.brand b{display:block;font-size:15.5px;letter-spacing:.5px;font-weight:700}
+.brand span{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.7px}
+.brand span b{display:inline;font-size:10.5px;letter-spacing:.7px;color:var(--tx2)}
+.nav{flex:1;overflow-y:auto;padding:10px 8px}
+.nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:var(--tx2);font-size:13.5px;margin-bottom:2px;cursor:pointer}
+.nav a:hover{background:var(--panel);color:var(--tx)}
+.nav a.on{background:rgba(74,158,255,.14);color:var(--ac);font-weight:600}
+.nav a i{width:18px;text-align:center;font-style:normal;opacity:.85}
+.nav .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);padding:14px 12px 6px;font-weight:600}
+.who{padding:12px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--tx2);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.who b{color:var(--tx);display:block;font-size:12.5px}
+.main{margin-left:230px;padding:24px 28px 60px}
+.head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;gap:16px;flex-wrap:wrap}
+.head h2{font-size:20px;letter-spacing:-.4px}
+.head p{color:var(--tx2);font-size:13px;margin-top:3px;max-width:70ch}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ---------- COMPONENTES ---------- */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:14px;margin-bottom:22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.card .lb{font-size:11px;color:var(--tx2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:7px}
+.card .vl{font-size:23px;font-weight:650;letter-spacing:-.6px}
+.card .ft{font-size:11.5px;color:var(--tx3);margin-top:5px}
+.card.ok .vl{color:var(--ok)} .card.warn .vl{color:var(--warn)} .card.bad .vl{color:var(--bad)} .card.info .vl{color:var(--info)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-bottom:18px;overflow:hidden}
+.panel .ph{padding:13px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.panel .ph h3{font-size:14px;font-weight:600}
+.panel .ph .sub{font-size:12px;color:var(--tx3);font-weight:400}
+.panel .pb{padding:18px}
+.panel .pb.flush{padding:0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 14px;background:var(--panel2);color:var(--tx2);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600;white-space:nowrap;position:sticky;top:0;z-index:2}
+td{padding:9px 14px;border-top:1px solid var(--line);white-space:nowrap}
+tbody tr:hover{background:rgba(255,255,255,.022)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.scroll{overflow:auto;max-height:62vh}
+.tag{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.2px}
+.t-ok{background:rgba(63,185,80,.15);color:var(--ok)}
+.t-warn{background:rgba(210,153,34,.15);color:var(--warn)}
+.t-bad{background:rgba(248,81,73,.15);color:var(--bad)}
+.t-info{background:rgba(163,113,247,.15);color:var(--info)}
+.t-mut{background:rgba(139,152,169,.14);color:var(--tx2)}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.filters .fld{margin:0;min-width:150px}
+.empty{padding:44px 20px;text-align:center;color:var(--tx3);font-size:13px}
+.load{padding:30px;text-align:center;color:var(--tx2);font-size:13px}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--ac);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.pos{color:var(--ok)} .neg{color:var(--bad)} .mut{color:var(--tx3)}
+.steps{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}
+.step{flex:1;min-width:120px;padding:10px 14px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--tx3)}
+.step.on{border-color:var(--ac);color:var(--ac);background:rgba(74,158,255,.08)}
+.step.done{border-color:var(--ok);color:var(--ok)}
+.step b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px;opacity:.75}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .15s;background:var(--bg2)}
+.drop:hover,.drop.over{border-color:var(--ac);background:rgba(74,158,255,.05)}
+.drop b{display:block;font-size:15px;margin-bottom:6px}
+.drop span{color:var(--tx2);font-size:12.5px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(860px,100%);max-height:88vh;overflow:auto;box-shadow:var(--sh)}
+.modal .mh{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--panel);z-index:3}
+.modal .mb{padding:22px}
+.x{background:none;border:none;color:var(--tx2);font-size:22px;cursor:pointer;line-height:1}
+.x:hover{color:var(--tx)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:8px 18px;font-size:13px}
+.kv dt{color:var(--tx2)} .kv dd{font-weight:600}
+.tl{border-left:2px solid var(--line);margin-left:8px;padding-left:20px}
+.tl .it{position:relative;padding-bottom:16px}
+.tl .it::before{content:'';position:absolute;left:-27px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--ac);border:2px solid var(--panel)}
+.tl .it.neg::before{background:var(--bad)} .tl .it.pos::before{background:var(--ok)} .tl .it.adj::before{background:var(--warn)}
+.tl .dt{font-size:11.5px;color:var(--tx3)}
+.tl .ds{font-size:13px;margin-top:2px}
+.alert{display:flex;gap:12px;padding:12px 14px;border-radius:9px;background:var(--bg2);border:1px solid var(--line);margin-bottom:9px;align-items:flex-start}
+.alert .ic{font-size:16px;line-height:1.2}
+.alert .tt{font-size:13px;font-weight:600;margin-bottom:2px}
+.alert .ms{font-size:12.5px;color:var(--tx2)}
+.hint{background:rgba(74,158,255,.07);border:1px solid rgba(74,158,255,.22);border-radius:9px;padding:12px 14px;font-size:12.5px;color:var(--tx2);margin-bottom:16px}
+.hint b{color:var(--tx)}
+.chartbox{height:270px;position:relative}
+.busca{padding:12px 12px 6px;position:relative}
+.busca input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:12.5px;outline:none}
+.busca input:focus{border-color:var(--ac)}
+.gres{position:absolute;left:12px;right:12px;top:46px;background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;box-shadow:var(--sh);max-height:60vh;overflow:auto;z-index:60;display:none}
+.gres.on{display:block}
+.gres .it{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+.gres .it:last-child{border-bottom:none}
+.gres .it:hover,.gres .it.sel{background:var(--panel2)}
+.gres .t1{font-size:12.5px;font-weight:600}
+.gres .t2{font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gres .tp{font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3)}
+.sec{margin-bottom:18px}
+.sec h3{font-size:13px;margin-bottom:10px;color:var(--tx2);text-transform:uppercase;letter-spacing:.7px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+@media(max-width:900px){.side{width:60px}.side .brand div,.side .nav a span,.side .who div{display:none}.main{margin-left:60px;padding:16px}}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <h1>X-RAY</h1>
+    <div class="sub">Monitoramento, auditoria e rastreabilidade de estoque — Filial 114</div>
+    <div id="lgmsg" class="msg"></div>
+    <div class="fld"><label>E-mail</label><input id="lgmail" type="email" autocomplete="username" placeholder="seu@email.com"></div>
+    <div class="fld"><label>Senha</label><input id="lgpass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+    <button class="btn w" id="lgbtn">Entrar</button>
+    <div style="text-align:center;margin-top:14px">
+      <a id="lgnew" style="font-size:12.5px;cursor:pointer">Primeiro acesso — criar minha conta</a>
+    </div>
+  </div>
+</div>
+
+<div id="app">
+  <aside class="side">
+    <div class="brand" id="brandHome" title="Voltar ao início">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 2.6 20.4 7v10L12 21.4 3.6 17V7z"/>
+        <path d="M3.6 7 12 11.4 20.4 7M12 11.4v10" opacity=".45"/>
+        <circle cx="11.4" cy="10.6" r="3.1"/>
+        <path d="m13.7 12.9 2.6 2.6"/>
+      </svg>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.1</b></span></div>
+    </div>
+    <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
+      <div class="gres" id="gres"></div></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="who"><div><b id="whoName">—</b><span id="whoRole">—</span></div><button class="btn gh sm" id="btnSair">Sair</button></div>
+  </aside>
+  <main class="main" id="view"></main>
+</div>
+
+<script>
+/* =========================================================
+   RAIO-X DO ESTOQUE — Fase 1
+   Front-end sem build. Toda agregação vem pronta do PostgreSQL.
+   ========================================================= */
+const VERSAO = 'v3.1';
+const CFG = {
+  url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
+  key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
+  schema: 'estoque',
+  filial: '114'
+};
+const sb = window.supabase.createClient(CFG.url, CFG.key, {
+  db:{ schema: CFG.schema },
+  auth:{ persistSession:true, autoRefreshToken:true, storageKey:'raiox-estoque' } });
+
+/* ---------- estado ---------- */
+const S = { user:null, role:null, branch:null, settings:{}, tesCfop:[], reasons:[] };
+
+/* ---------- utilidades ---------- */
+const $  = s => document.querySelector(s);
+const el = (h) => { const d=document.createElement('div'); d.innerHTML=h.trim(); return d.firstElementChild; };
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nf  = (v,d=0) => (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
+const money = v => (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const pct = (v,d=1) => (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toFixed(d).replace('.',',')+'%';
+const dt  = v => !v ? '—' : new Date(v+(String(v).length<=10?'T12:00:00':'')).toLocaleDateString('pt-BR');
+const dts = v => !v ? '—' : new Date(v).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'});
+const sgn = v => v>0 ? 'pos' : v<0 ? 'neg' : 'mut';
+const toast = (m,t='ok') => {
+  const n = el(`<div style="position:fixed;bottom:22px;right:22px;z-index:400;background:var(--panel);border:1px solid var(--${t==='err'?'bad':'ok'});border-radius:10px;padding:13px 18px;font-size:13px;box-shadow:var(--sh);max-width:420px">${esc(m)}</div>`);
+  document.body.appendChild(n); setTimeout(()=>n.remove(), t==='err'?7000:4000);
+};
+const modal = (title, body, wide) => {
+  const m = el(`<div class="modal"><div class="box"${wide?' style="width:min(1150px,100%)"':''}>
+    <div class="mh"><h3 style="font-size:15px">${esc(title)}</h3><button class="x">&times;</button></div>
+    <div class="mb"></div></div></div>`);
+  m.querySelector('.mb').innerHTML = body;
+  m.querySelector('.x').onclick = () => m.remove();
+  m.onclick = e => { if(e.target===m) m.remove(); };
+  document.body.appendChild(m); return m;
+};
+const dl = (name, blob) => { const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href); };
+const toXlsx = (rows, name, sheet='Dados') => {
+  const ws = XLSX.utils.json_to_sheet(rows), wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheet); XLSX.writeFile(wb, name);
+};
+const err = e => {
+  console.error(e);
+  const m = e?.message || '';
+  if(/JWT|expired|Invalid Refresh Token|session/i.test(m)) { tratarSessaoPerdida(); return; }
+  toast(m || 'Erro inesperado', 'err');
+};
+
+/* A API do Supabase devolve no máximo 1000 linhas por requisição. Pedir .limit(3000)
+   não dá erro: ela simplesmente entrega 1000 e o total somado na tela sai menor que
+   o real, sem nenhum aviso. Toda listagem grande passa por aqui. */
+const fetchAll = async (build, passo = 1000) => {
+  let tudo = [], ini = 0;
+  for(;;){
+    const { data, error } = await build().range(ini, ini + passo - 1);
+    if(error) throw error;
+    tudo = tudo.concat(data || []);
+    if(!data || data.length < passo) return tudo;
+    ini += passo;
+    if(ini > 100000) return tudo;
+  }
+};
+
+/* Rede corporativa costuma bloquear CDN. Sem isto, uma biblioteca que não carrega
+   deixa a tela muda: o usuário arrasta o arquivo e simplesmente nada acontece. */
+const ensureLib = (cond, urls, nome) => new Promise((res, rej) => {
+  if(cond()) return res();
+  let i = 0;
+  const proximo = () => {
+    if(i >= urls.length) return rej(new Error(`Não consegui carregar a biblioteca ${nome}. `
+      + `Sua rede provavelmente bloqueia o CDN — teste em outra conexão ou libere jsdelivr.net.`));
+    const sc = document.createElement('script'); sc.src = urls[i++];
+    sc.onload = () => cond() ? res() : proximo();
+    sc.onerror = proximo;
+    document.head.appendChild(sc);
+  };
+  proximo();
+});
+const LIB_XLSX = ['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+                  'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js',
+                  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+                  'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js'];
+
+// sem isto o navegador abre o arquivo quando o drop cai fora da area
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop',     e => e.preventDefault());
+
+/* ---------- login ---------- */
+async function doLogin(create){
+  const email = $('#lgmail').value.trim(), pass = $('#lgpass').value;
+  const box = $('#lgmsg'); box.className='msg';
+  if(!email || !pass) { box.className='msg err'; box.textContent='Informe e-mail e senha.'; return; }
+  $('#lgbtn').disabled = true;
+  try{
+    const fn = create ? sb.auth.signUp({email, password:pass}) : sb.auth.signInWithPassword({email, password:pass});
+    const { data, error } = await fn;
+    if(error) throw error;
+    if(create && !data.session){ box.className='msg ok'; box.textContent='Conta criada. Confirme o e-mail e entre novamente.'; return; }
+    await boot();
+  }catch(e){
+    box.className='msg err';
+    box.textContent = /Invalid login/i.test(e.message) ? 'E-mail ou senha incorretos.' : e.message;
+  }finally{ $('#lgbtn').disabled = false; }
+}
+$('#lgbtn').onclick = () => doLogin(false);
+$('#lgnew').onclick = () => doLogin(true);
+$('#lgpass').onkeydown = e => { if(e.key==='Enter') doLogin(false); };
+$('#btnSair').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+/* ---------- boot ---------- */
+const MENU = [
+  {g:'Operação'},
+  {id:'dashboard',   t:'Dashboard',      i:'▤'},
+  {id:'importacao',  t:'Importação',     i:'▼'},
+  {id:'transito',    t:'Em trânsito',    i:'⇄'},
+  {id:'inventario',  t:'Inventário',     i:'☑'},
+  {g:'Consulta'},
+  {id:'estoque',     t:'Estoque',        i:'▦'},
+  {id:'lotes',       t:'Lotes',          i:'◫'},
+  {id:'giro',        t:'Giro e cobertura',i:'◑'},
+  {id:'movimentos',  t:'Movimentações',  i:'≡'},
+  {id:'kardex',      t:'Kardex',         i:'◧'},
+  {g:'Auditoria'},
+  {id:'conciliacao', t:'Conciliação ERP',i:'⇋'},
+  {id:'divergencias',t:'Divergências',   i:'⚠'},
+  {id:'ajustes',     t:'Ajustes',        i:'±'},
+  {id:'anomalias',   t:'Alertas',        i:'◈'},
+  {id:'auditoria',   t:'Log de auditoria',i:'◱'},
+  {g:'Sistema'},
+  {id:'config',      t:'Configurações',  i:'⚙'}
+];
+
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session) { $('#login').style.display='flex'; $('#app').style.display='none'; return; }
+  S.user = session.user;
+
+  const { data:me, error } = await sb.from('app_users').select('*').eq('id', S.user.id).maybeSingle();
+  if(error) return err(error);
+  if(!me){
+    $('#lgmsg').className='msg err';
+    $('#lgmsg').textContent = 'Sua conta foi criada, mas não está autorizada a acessar o sistema. Peça ao administrador para incluir seu e-mail na lista de acesso.';
+    await sb.auth.signOut(); $('#login').style.display='flex'; return;
+  }
+  S.role = me.role; S.branch = me.branch_id;
+  $('#whoName').textContent = me.full_name;
+  $('#whoRole').textContent = ({admin:'Administrador',auditor:'Auditor',operacional:'Operacional',consulta:'Consulta'})[me.role];
+
+  const [st, tc, rs] = await Promise.all([
+    sb.from('system_settings').select('chave,valor'),
+    sb.from('tes_cfop_map').select('*').eq('ativo',true),
+    sb.from('adjustment_reasons').select('*').eq('ativo',true).order('descricao')
+  ]);
+  (st.data||[]).forEach(r => S.settings[r.chave] = Number(r.valor));
+  S.tesCfop = tc.data||[]; S.reasons = rs.data||[];
+
+  $('#nav').innerHTML = MENU.map(m => m.g
+    ? `<div class="grp">${m.g}</div>`
+    : `<a data-r="${m.id}"><i>${m.i}</i><span>${m.t}</span></a>`).join('');
+  $('#nav').onclick = e => { const a = e.target.closest('a[data-r]'); if(a) location.hash = a.dataset.r; };
+
+  ligarBuscaGlobal();
+  on('#brandHome','click', () => { location.hash = 'dashboard'; });
+  $('#login').style.display='none'; $('#app').style.display='block';
+  window.onhashchange = route;
+  try{ const volta = sessionStorage.getItem('rx_volta');
+       if(volta){ sessionStorage.removeItem('rx_volta'); location.hash = volta; } }catch(e){}
+  route();
+}
+
+/* Busca global: um campo só para chegar em qualquer item, por código, descrição,
+   lote ou número de nota. Tudo desemboca na mesma página — o Raio-X do produto. */
+function ligarBuscaGlobal(){
+  const inp = $('#gbusca'), cx = $('#gres');
+  if(!inp || inp.dataset.on) return;
+  inp.dataset.on = '1';
+  let timer, achados = [], sel = -1;
+
+  const fechar = () => { cx.classList.remove('on'); sel = -1; };
+  const abrir = () => {
+    if(!achados.length){ cx.innerHTML = '<div class="it"><div class="t2">Nada encontrado.</div></div>'; }
+    else cx.innerHTML = achados.map((r,i)=>`<div class="it${i===sel?' sel':''}" data-i="${i}">
+      <div class="tp">${esc(r.tipo)}</div>
+      <div class="t1">${esc(r.titulo)}</div>
+      <div class="t2">${esc(r.subtitulo||'')}${r.extra?' · '+esc(r.extra):''}</div></div>`).join('');
+    cx.classList.add('on');
+    cx.querySelectorAll('.it[data-i]').forEach(d => d.onclick = () => ir(Number(d.dataset.i)));
+  };
+  const ir = i => { const r = achados[i]; if(!r) return;
+    inp.value = ''; fechar(); location.hash = 'produto?id=' + r.id; };
+
+  inp.oninput = () => {
+    clearTimeout(timer);
+    const q = inp.value.trim();
+    if(q.length < 2) return fechar();
+    timer = setTimeout(async () => {
+      const { data, error } = await sb.rpc('fn_busca_global', { p_termo:q, p_limite:25 });
+      if(error) return err(error);
+      achados = data || []; sel = achados.length ? 0 : -1; abrir();
+    }, 280);
+  };
+  inp.onkeydown = e => {
+    if(!cx.classList.contains('on')) return;
+    if(e.key === 'ArrowDown'){ e.preventDefault(); sel = Math.min(sel+1, achados.length-1); abrir(); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); sel = Math.max(sel-1, 0); abrir(); }
+    else if(e.key === 'Enter'){ e.preventDefault(); ir(sel < 0 ? 0 : sel); }
+    else if(e.key === 'Escape') fechar();
+  };
+  document.addEventListener('click', e => { if(!e.target.closest('.busca')) fechar(); });
+}
+
+const ROUTES = {};
+function route(){
+  const id = (location.hash||'#dashboard').slice(1).split('?')[0];
+  log({ ev:'tela', tela:id });
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.r===id));
+  const fn = ROUTES[id] || ROUTES.dashboard;
+  $('#view').innerHTML = '<div class="load"><span class="spin"></span>Carregando…</div>';
+  Promise.resolve(fn()).catch(err);
+}
+const can = (...roles) => roles.includes(S.role);
+// handler tolerante: elemento ausente não pode derrubar o resto da tela
+const on = (sel, ev, fn) => { const e = $(sel); if(e) e['on'+ev] = fn;
+  else console.warn('elemento ausente:', sel); };
+const header = (t,p,tools='') => `<div class="head"><div><h2>${t}</h2>${p?`<p>${p}</p>`:''}</div><div class="tools">${tools}</div></div>`;
+
+/* =========================================================
+   DASHBOARD
+   ========================================================= */
+ROUTES.dashboard = async () => {
+  const { data:k, error } = await sb.rpc('fn_dashboard');
+  if(error) return err(error);
+  const { data:an } = await sb.rpc('fn_anomalias');
+  const alerts = (an||[]).slice(0,6);
+
+  const card = (lb,vl,ft,cls='') => `<div class="card ${cls}"><div class="lb">${lb}</div><div class="vl">${vl}</div>${ft?`<div class="ft">${ft}</div>`:''}</div>`;
+  const acu = k.acuracidade_itens===null ? null : k.acuracidade_itens*100;
+
+  $('#view').innerHTML = header('Dashboard executivo','Como está o estoque agora, e o que precisa de investigação.',
+    `<button class="btn gh sm" onclick="location.hash='conciliacao'">Nova conciliação</button>`) + `
+  <div class="cards">
+    ${card('Estoque atual', nf(k.estoque_qtd), `${nf(k.produtos_com_saldo)} produtos · ${nf(k.lotes_com_saldo)} lotes`)}
+    ${card('Valor do estoque', money(k.estoque_valor),'a custo médio')}
+    ${card('Acuracidade de itens', acu===null?'—':pct(acu), acu===null?'sem conciliação ainda':'última conciliação', acu===null?'':(acu>=98?'ok':acu>=95?'warn':'bad'))}
+    ${card('Divergência financeira', k.divergencia_valor===null?'—':money(k.divergencia_valor), `${k.itens_divergentes===null?'—':nf(k.itens_divergentes)} itens divergentes`, k.divergencia_valor?'bad':'')}
+    ${card('Parado > 30 dias', money(k.parado_30_valor), `${nf(k.parado_30_lotes)} lotes`, k.parado_30_valor>0?'warn':'')}
+    ${card('Sem inventário', nf(k.sem_inventario_30), 'lotes com saldo há mais de 30 dias', k.sem_inventario_30>0?'warn':'')}
+    ${card('Ajustes no mês', nf(k.ajustes_mes), 'movimentos de ajuste')}
+    ${card('Perdas no mês', money(k.perdas_mes), 'ajustes negativos', k.perdas_mes>0?'bad':'')}
+    ${card('Em trânsito', nf(k.em_transito_qtd), `${money(k.em_transito_valor)} aguardando recebimento`, k.em_transito_qtd>0?'info':'')}
+    ${card('Saldos negativos', nf(k.saldo_negativo), 'saída sem entrada correspondente', k.saldo_negativo>0?'bad':'')}
+  </div>
+
+  ${(k.estoque_qtd==0 && k.itens_divergentes>0) ? `<div class="panel" style="border-color:rgba(210,153,34,.4)">
+    <div class="pb"><b style="color:var(--warn)">O saldo do sistema está zerado, então tudo aparece como divergente.</b>
+    <div style="color:var(--tx2);font-size:13px;margin-top:6px">Isso acontece quando o Estoque Atual foi importado
+    <b>sem marcar "Usar como Marco Zero"</b>: os produtos e lotes foram criados, mas nenhum saldo de partida entrou no razão.
+    Zere a base em Configurações e importe de novo marcando o Marco Zero — os alertas somem sozinhos.</div></div></div>` : ''}
+  <div class="panel"><div class="ph"><h3>Alertas que pedem investigação</h3>
+    <a style="font-size:12.5px;cursor:pointer" onclick="location.hash='anomalias'">ver todos</a></div>
+    <div class="pb">${alerts.length ? alerts.map(a=>`
+      <div class="alert" style="cursor:pointer"${a.product_id?` onclick="location.hash='produto?id=${a.product_id}'"`:''}>
+        <div class="ic">${a.severidade==='alta'?'🔴':'🟠'}</div>
+        <div><div class="tt">${esc(a.sku||'')} ${esc(a.descricao||'')}</div>
+        <div class="ms">${esc(a.mensagem)}</div></div></div>`).join('')
+      : '<div class="empty">Nenhum alerta. Importe os dados para começar a medir.</div>'}
+    </div></div>`;
+};
+
+/* =========================================================
+   ESTOQUE (por produto)
+   ========================================================= */
+ROUTES.estoque = async () => {
+  const data = await fetchAll(() => sb.from('v_stock_current').select('*').order('valor_atual',{ascending:false}));
+  const tot = data.reduce((a,r)=>a+Number(r.valor_atual||0),0);
+
+  $('#view').innerHTML = header('Estoque atual', `${nf(data.length)} produtos · ${money(tot)} em estoque`,
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="filters"><div class="fld" style="min-width:280px"><label>Buscar produto</label>
+    <input id="q" placeholder="código ou descrição"></div></div>
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Descrição</th><th>Grupo</th><th class="num">Saldo</th><th>UM</th>
+      <th class="num">Custo unit.</th><th class="num">Valor</th><th class="num">Lotes</th>
+      <th>Últ. movto</th><th>Últ. inventário</th><th></th></tr></thead>
+    <tbody id="tb"></tbody></table></div></div></div>`;
+
+  const draw = q => {
+    const f = !q ? data : data.filter(r => (r.sku+' '+r.descricao).toLowerCase().includes(q.toLowerCase()));
+    $('#tb').innerHTML = f.length ? f.slice(0,800).map(r=>`<tr>
+      <td class="mono">${esc(r.sku)}</td><td>${esc(r.descricao)}</td><td>${esc(r.grupo||'—')}</td>
+      <td class="num">${nf(r.qtd_atual)}</td><td>${esc(r.unidade)}</td>
+      <td class="num">${money(r.custo_unitario)}</td><td class="num">${money(r.valor_atual)}</td>
+      <td class="num">${nf(r.lotes_com_saldo)}</td>
+      <td>${dt(r.ultima_movimentacao)}</td><td>${dt(r.data_ultimo_inventario)}</td>
+      <td><a style="cursor:pointer" onclick="location.hash='produto?id=${r.product_id}'">X-Ray</a></td>
+    </tr>`).join('') : '<tr><td colspan="11" class="empty">Nenhum produto encontrado.</td></tr>';
+  };
+  draw(''); $('#q').oninput = e => draw(e.target.value);
+  $('#exp').onclick = () => toXlsx(data.map(r=>({Codigo:r.sku,Descricao:r.descricao,Grupo:r.grupo,Saldo:r.qtd_atual,
+    UM:r.unidade,CustoUnit:r.custo_unitario,Valor:r.valor_atual,Lotes:r.lotes_com_saldo,
+    UltimoMovimento:r.ultima_movimentacao,UltimoInventario:r.data_ultimo_inventario})), 'estoque-atual.xlsx');
+};
+
+/* =========================================================
+   LOTES — relógio e estoque parado
+   ========================================================= */
+ROUTES.lotes = async () => {
+  const [data, faixasDb] = await Promise.all([
+    fetchAll(() => sb.from('v_lots_live').select('*').gt('qtd_atual',0)
+      .order('dias_em_estoque',{ascending:false,nullsFirst:false})),
+    sb.rpc('fn_faixas_estoque').then(r => r.data || [])
+  ]);
+  const f1=S.settings.parado_faixa_1||30, f2=S.settings.parado_faixa_2||60, f3=S.settings.parado_faixa_3||90, f4=S.settings.parado_faixa_4||180;
+  const faixa = d => d==null?'—' : d>f4?`> ${f4}` : d>f3?`${f3+1}–${f4}` : d>f2?`${f2+1}–${f3}` : d>f1?`${f1+1}–${f2}` : `0–${f1}`;
+  const cls = d => d==null?'t-mut' : d>f3?'t-bad' : d>f1?'t-warn':'t-ok';
+  // os totais por faixa vêm somados do banco — nunca do que coube na tela
+
+  const temEstimada = data.some(r=>r.idade_estimada);
+  $('#view').innerHTML = header('Lotes e idade do estoque',
+    'O relógio é calculado na consulta, nunca gravado. Lotes que vieram do Marco Zero contam a idade a partir dele — o ERP não informa quando entraram de verdade.',
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="cards">${faixasDb.map(f=>
+    `<div class="card"><div class="lb">${esc(f.faixa)} dias</div><div class="vl" style="font-size:19px">${money(f.valor)}</div>
+     <div class="ft">${nf(f.lotes)} lotes · ${nf(f.qtd)} ${data[0]?.unidade||''}</div></div>`).join('')}</div>
+  <div class="hint"><b>Lote genérico (R100, S/L) não tem idade útil:</b> o balde nunca zera, então o relógio dele
+    não diz há quanto tempo o material está parado. Para esses itens — e para medir quanto sai por período —
+    use <a style="cursor:pointer" onclick="location.hash='giro'">Giro e cobertura</a>, que calcula a idade pelo fluxo.</div>
+  ${temEstimada?`<div class="hint"><b>Idade contada a partir do Marco Zero</b> nos lotes marcados com <span class="tag t-info">MZ</span>.
+    O ERP não informa a data real de entrada desses lotes, então a contagem começa no dia da primeira carga.
+    A idade real é igual ou maior — vale para comparar lotes entre si e para acompanhar o envelhecimento daqui para frente,
+    não para afirmar há quanto tempo o material está parado.</div>`:''}
+  <div class="filters">
+    <div class="fld" style="min-width:260px"><label>Buscar</label><input id="q" placeholder="produto, descrição ou lote"></div>
+    <div class="fld"><label>Idade mínima (dias)</label><input id="dmin" type="number" value="0" style="width:130px"></div>
+    <div class="fld"><label>Tipo de lote</label><select id="tp"><option value="">Todos</option>
+      <option value="real">Rastreável</option><option value="gen">Genérico (R100, S/L…)</option></select></div>
+  </div>
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th>Arm.</th><th>Entrada</th>
+      <th class="num">Dias</th><th>Faixa</th><th class="num">Saldo</th><th class="num">Valor parado</th>
+      <th class="num">Sem movto</th><th>Últ. inventário</th></tr></thead>
+    <tbody id="tb"></tbody></table></div></div></div>`;
+
+  const draw = () => {
+    const q=$('#q').value.toLowerCase(), dmin=Number($('#dmin').value||0), tp=$('#tp').value;
+    const f = data.filter(r =>
+      (!q || (r.sku+' '+r.descricao+' '+r.numero_lote).toLowerCase().includes(q)) &&
+      (Number(r.dias_em_estoque||0) >= dmin) &&
+      (!tp || (tp==='gen') === !!r.lote_generico));
+    $('#tb').innerHTML = f.length ? f.slice(0,800).map(r=>`<tr>
+      <td class="mono">${esc(r.sku)}</td><td>${esc(r.descricao)}</td>
+      <td class="mono">${esc(r.numero_lote)}${r.lote_generico?' <span class="tag t-mut">genérico</span>':''}</td>
+      <td>${esc(r.armazem)}</td><td>${dt(r.data_entrada)}${r.idade_estimada?' <span class="tag t-info" title="Idade contada a partir do Marco Zero">MZ</span>':''}</td>
+      <td class="num">${nf(r.dias_em_estoque)}</td>
+      <td><span class="tag ${cls(r.dias_em_estoque)}">${faixa(r.dias_em_estoque)}</span></td>
+      <td class="num">${nf(r.qtd_atual)}</td><td class="num">${money(r.valor_atual)}</td>
+      <td class="num">${nf(r.dias_sem_movimento)}</td><td>${dt(r.data_ultimo_inventario)}</td>
+    </tr>`).join('') : '<tr><td colspan="11" class="empty">Nenhum lote encontrado.</td></tr>';
+  };
+  draw(); ['q','dmin','tp'].forEach(i => { $('#'+i).oninput = draw; $('#'+i).onchange = draw; });
+  $('#exp').onclick = () => toXlsx(data.map(r=>({Codigo:r.sku,Descricao:r.descricao,Lote:r.numero_lote,Armazem:r.armazem,
+    Entrada:r.data_entrada,DiasEmEstoque:r.dias_em_estoque,Saldo:r.qtd_atual,Valor:r.valor_atual,
+    DiasSemMovimento:r.dias_sem_movimento,UltimoInventario:r.data_ultimo_inventario})), 'lotes-idade.xlsx');
+};
+
+/* =========================================================
+   MOVIMENTAÇÕES
+   ========================================================= */
+ROUTES.movimentos = async () => {
+  $('#view').innerHTML = header('Movimentações','Livro-razão do estoque. Nada aqui é apagado — estornos ficam visíveis com a tarja.',
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="filters">
+    <div class="fld" style="min-width:240px"><label>Produto / documento</label><input id="q" placeholder="código, descrição ou NF"></div>
+    <div class="fld"><label>Tipo</label><select id="tp"><option value="">Todos</option>
+      ${['ENTRADA','SAIDA','TRANSF_ENTRADA','TRANSF_SAIDA','DEVOLUCAO','AJUSTE_POSITIVO','AJUSTE_NEGATIVO'].map(t=>`<option>${t}</option>`).join('')}</select></div>
+    <div class="fld"><label>De</label><input id="de" type="date"></div>
+    <div class="fld"><label>Até</label><input id="ate" type="date"></div>
+    <div class="fld"><label>&nbsp;</label><button class="btn sm" id="go">Filtrar</button></div>
+  </div>
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Data</th><th>Tipo</th><th>Documento</th><th>Produto</th><th>Lote</th>
+      <th class="num">Qtd</th><th class="num">Valor custo</th><th>Cliente / origem</th><th>Situação</th><th>Ação</th></tr></thead>
+    <tbody id="tb"><tr><td colspan="10" class="load"><span class="spin"></span>Carregando…</td></tr></tbody>
+  </table></div></div></div>`;
+  let rows = [];
+  const load = async () => {
+    let q = sb.from('stock_movements')
+      .select('id,movement_date,tipo,documento,quantidade,sinal,valor_custo,cliente_nome,origem,motivo,status_transito,voided_at,reverses_movement_id,products(sku,descricao),lots(numero_lote)')
+      .order('movement_date',{ascending:false}).order('seq',{ascending:false}).limit(500);
+    const t=$('#tp').value, de=$('#de').value, ate=$('#ate').value, s=$('#q').value.trim();
+    if(t) q = q.eq('tipo',t);
+    if(de) q = q.gte('movement_date',de);
+    if(ate) q = q.lte('movement_date',ate);
+    if(s){
+      // o campo aceita código do produto, descrição ou número do documento:
+      // resolvo os produtos primeiro e busco os dois lados de uma vez
+      const { data:ps } = await sb.from('products').select('id')
+        .or(`sku.ilike.%${s}%,descricao.ilike.%${s}%`).limit(300);
+      const ids = (ps||[]).map(p=>p.id);
+      q = ids.length ? q.or(`documento.ilike.%${s}%,product_id.in.(${ids.join(',')})`)
+                     : q.ilike('documento', `%${s}%`);
+    }
+    const { data, error } = await q;
+    if(error) return err(error);
+    rows = data;
+    // quais saídas já têm devolução ou cancelamento lançado
+    const ids = data.map(r=>r.id);
+    const { data:revs } = ids.length
+      ? await sb.from('stock_movements').select('reverses_movement_id,motivo,documento')
+          .in('reverses_movement_id', ids).is('voided_at', null)
+      : { data: [] };
+    const revertidos = new Map((revs||[]).map(r=>[r.reverses_movement_id, r]));
+    $('#tb').innerHTML = data.length ? data.map(r=>`<tr${r.voided_at?' style="opacity:.5;text-decoration:line-through"':''}>
+      <td>${dt(r.movement_date)}</td><td>${esc(r.tipo)}</td><td class="mono">${esc(r.documento||'—')}</td>
+      <td class="mono">${esc(r.products?.sku||'—')}</td><td class="mono">${esc(r.lots?.numero_lote||'—')}</td>
+      <td class="num ${sgn(r.sinal)}">${r.sinal>0?'+':''}${nf(r.quantidade)}</td>
+      <td class="num">${money(r.valor_custo)}</td>
+      <td>${esc(r.cliente_nome||r.origem||'—')}</td>
+      <td>${r.voided_at?'<span class="tag t-mut">estornado</span>':
+           r.status_transito==='EM_TRANSITO'?'<span class="tag t-info">em trânsito</span>':
+           r.status_transito==='DIVERGENTE'?'<span class="tag t-bad">receb. divergente</span>':
+           r.reverses_movement_id?`<span class="tag t-info">${esc(r.motivo||'estorno')}</span>`:
+           '<span class="tag t-ok">efetivado</span>'}</td>
+      <td>${ revertidos.has(r.id)
+        ? `<span class="tag t-info">${esc(revertidos.get(r.id).motivo||'revertida')}</span>`
+        : (['SAIDA','TRANSF_SAIDA'].includes(r.tipo) && !r.voided_at && can('admin','auditor')) ? `
+        <button class="btn sm gh" onclick="reverter('${r.id}','DEVOLUCAO','${esc(r.products?.sku||'')}',${r.quantidade},'${esc(r.documento||'')}')">Devolução</button>
+        <button class="btn sm gh" onclick="reverter('${r.id}','CANCELAMENTO','${esc(r.products?.sku||'')}',${r.quantidade},'${esc(r.documento||'')}')">Cancelar</button>` : ''}</td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhuma movimentação. Comece pela Importação.</td></tr>';
+  };
+  $('#go').onclick = load;
+  $('#exp').onclick = () => toXlsx(rows.map(r=>({Data:r.movement_date,Tipo:r.tipo,Documento:r.documento,
+    Produto:r.products?.sku,Descricao:r.products?.descricao,Lote:r.lots?.numero_lote,
+    Quantidade:Number(r.quantidade)*r.sinal,ValorCusto:r.valor_custo,Cliente:r.cliente_nome,
+    Estornado:r.voided_at?'SIM':'NAO'})), 'movimentacoes.xlsx');
+  load();
+};
+
+window.reverter = (id, acao, sku, qtdMax, docOriginal) => {
+  const ehDev = acao === 'DEVOLUCAO';
+  const rotulo = ehDev ? 'Devolução' : 'Cancelamento';
+  const m = modal(`${rotulo} — ${sku}`, `
+    <div class="hint">Isto <b>não apaga</b> a saída original. Cria uma entrada ligada a ela, e as duas continuam
+    visíveis no Kardex — é assim que o histórico segue auditável. O consumo do mês é abatido automaticamente.</div>
+    <dl class="kv" style="margin-bottom:16px">
+      <dt>Nota fiscal da saída</dt><dd class="mono">${esc(docOriginal||'sem nota')}</dd>
+      <dt>Quantidade da saída</dt><dd>${nf(qtdMax)}</dd></dl>
+    ${ehDev ? `<div class="fld"><label>Nota fiscal de entrada da devolução <span style="color:var(--bad)">*</span></label>
+        <input id="doc" placeholder="número da NF gerada na devolução">
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">
+          A devolução gera nota nova. Ela fica como documento do movimento, e a NF ${esc(docOriginal||'da saída')} fica guardada como referência.</div></div>`
+      : `<div class="fld"><label>Nota fiscal cancelada</label>
+        <input value="${esc(docOriginal||'sem nota')}" disabled style="opacity:.65">
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">
+          Cancelamento não gera nota nova — fica registrado sobre a própria NF cancelada.</div></div>`}
+    <div class="fld"><label>Quantidade a ${ehDev?'devolver':'cancelar'}</label>
+      <input id="q" type="number" step="0.0001" max="${qtdMax}" value="${qtdMax}"></div>
+    <div class="fld"><label>Observação</label><textarea id="o" rows="2" placeholder="opcional"></textarea></div>
+    <button class="btn" id="ok">Confirmar ${rotulo.toLowerCase()}</button>`);
+  m.querySelector('#ok').onclick = async () => {
+    const doc = ehDev ? (m.querySelector('#doc').value||'').trim() : null;
+    if(ehDev && !doc) return toast('Informe o número da nota fiscal de entrada da devolução.', 'err');
+    const { data, error } = await sb.rpc('fn_reverter_movimento', {
+      p_movement:id, p_acao:acao,
+      p_qtd:Number(m.querySelector('#q').value||0),
+      p_observacao:m.querySelector('#o').value||null,
+      p_documento:doc });
+    if(error) return err(error);
+    m.remove();
+    toast(ehDev ? `Devolução registrada na NF ${data.documento}: ${nf(data.quantidade)} voltou ao estoque.`
+                : `Cancelamento registrado na NF ${data.documento}: ${nf(data.quantidade)} voltou ao estoque.`);
+    route();
+  };
+};
+
+/* =========================================================
+   KARDEX
+   ========================================================= */
+ROUTES.kardex = async () => {
+  const pid = new URLSearchParams((location.hash.split('?')[1]||'')).get('p');
+  const prods = await fetchAll(() => sb.from('products').select('id,sku,descricao,unidade').order('sku'));
+  $('#view').innerHTML = header('Kardex','Saldo inicial → movimentações → saldo final. A ordem é determinística: data + sequência de registro.',
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="filters">
+    <div class="fld" style="min-width:360px"><label>Produto</label>
+      <input id="pbusca" list="lista-prod" autocomplete="off"
+             placeholder="digite o código ou parte da descrição"
+             value="${pid ? esc(((prods||[]).find(x=>x.id===pid)||{}).sku||'') : ''}">
+      <datalist id="lista-prod">
+        ${(prods||[]).map(p=>`<option value="${esc(p.sku)}">${esc(p.descricao)}</option>`).join('')}
+      </datalist>
+      <input type="hidden" id="p" value="${pid||''}">
+      <div id="pinfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
+    <div class="fld"><label>Lote</label><select id="l"><option value="">Todos</option></select></div>
+    <div class="fld"><label>De</label><input id="de" type="date"></div>
+    <div class="fld"><label>Até</label><input id="ate" type="date"></div>
+    <div class="fld"><label>&nbsp;</label><button class="btn sm" id="go">Consultar</button></div>
+  </div>
+  <div id="kxResultado"></div>`;
+
+  let rows = [];
+  const loadLots = async () => {
+    const id = $('#p').value; const sel = $('#l');
+    sel.innerHTML = '<option value="">Todos</option>';
+    if(!id) return;
+    const { data } = await sb.from('v_lots_live').select('lot_id,numero_lote,qtd_atual').eq('product_id',id).order('numero_lote');
+    (data||[]).forEach(l => sel.insertAdjacentHTML('beforeend', `<option value="${l.lot_id}">${esc(l.numero_lote)} (${nf(l.qtd_atual)})</option>`));
+  };
+  const load = async () => {
+    const id = $('#p').value;
+    if(!id) { $('#kxResultado').innerHTML = '<div class="panel"><div class="empty">Selecione um produto.</div></div>'; return; }
+    $('#kxResultado').innerHTML = '<div class="load"><span class="spin"></span>Montando o Kardex…</div>';
+    const { data, error } = await sb.rpc('fn_kardex', {
+      p_product:id, p_lot:$('#l').value||null, p_de:$('#de').value||null, p_ate:$('#ate').value||null,
+      p_tipos:null, p_documento:null, p_user:null, p_limit:1000, p_offset:0 });
+    if(error) return err(error);
+    rows = data||[];
+    const ini = rows.length ? Number(rows[0].saldo_inicial) : 0;
+    const fim = rows.length ? Number(rows[rows.length-1].saldo_corrente) : ini;
+    const p = (prods||[]).find(x=>x.id===id);
+    $('#kxResultado').innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="lb">Saldo inicial</div><div class="vl">${nf(ini)}</div><div class="ft">${esc(p?.unidade||'')}</div></div>
+      <div class="card"><div class="lb">Movimentações</div><div class="vl">${nf(rows.length)}</div></div>
+      <div class="card ok"><div class="lb">Saldo final</div><div class="vl">${nf(fim)}</div></div>
+    </div>
+    <div class="panel"><div class="ph"><h3>${esc(p?.sku||'')} — ${esc(p?.descricao||'')}</h3></div>
+    <div class="pb flush"><div class="scroll"><table>
+      <thead><tr><th>Data</th><th>Documento</th><th>Tipo</th><th>Lote</th>
+        <th class="num">Entrada</th><th class="num">Saída</th><th class="num">Ajuste</th>
+        <th class="num">Saldo</th><th class="num">Custo unit.</th><th>Situação</th></tr></thead>
+      <tbody>${rows.length ? rows.map(r=>`<tr${r.estornado?' style="opacity:.45;text-decoration:line-through"':''}>
+        <td>${dt(r.movement_date)}</td><td class="mono">${esc(r.documento||'—')}</td><td>${esc(r.tipo)}</td>
+        <td class="mono">${esc(r.numero_lote||'—')}</td>
+        <td class="num pos">${r.entrada?nf(r.entrada):''}</td>
+        <td class="num neg">${r.saida?nf(r.saida):''}</td>
+        <td class="num ${sgn(r.ajuste)}">${r.ajuste?nf(r.ajuste):''}</td>
+        <td class="num"><b>${nf(r.saldo_corrente)}</b></td>
+        <td class="num">${money(r.custo_unitario)}</td>
+        <td>${r.estornado?'<span class="tag t-mut">estornado</span>':r.em_transito?'<span class="tag t-info">em trânsito</span>':''}</td>
+      </tr>`).join('') : '<tr><td colspan="10" class="empty">Sem movimentação no período.</td></tr>'}</tbody>
+    </table></div></div></div>`;
+  };
+  // digitável: aceita código exato, ou acha por trecho do código/descrição
+  const acha = txt => {
+    const t = (txt||'').trim().toLowerCase(); if(!t) return null;
+    return (prods||[]).find(p => p.sku.toLowerCase() === t)
+        || (prods||[]).find(p => p.sku.toLowerCase().startsWith(t))
+        || (prods||[]).find(p => (p.sku+' '+p.descricao).toLowerCase().includes(t))
+        || null;
+  };
+  const escolher = async (auto) => {
+    const p = acha($('#pbusca').value);
+    $('#p').value = p ? p.id : '';
+    $('#pinfo').innerHTML = p ? `<span class="pos">✔</span> ${esc(p.sku)} — ${esc(p.descricao)}`
+      : ($('#pbusca').value.trim() ? '<span class="neg">nenhum produto encontrado</span>' : '');
+    if(p && auto){ await loadLots(); load(); }
+  };
+  on('#pbusca','change', () => escolher(true));
+  on('#pbusca','input',  () => escolher(false));
+  on('#pbusca','keydown', e => { if(e.key==='Enter') escolher(true); });
+  $('#go').onclick = async () => { await escolher(false); if($('#p').value){ await loadLots(); } load(); };
+  $('#exp').onclick = () => rows.length ? toXlsx(rows.map(r=>({Data:r.movement_date,Documento:r.documento,Tipo:r.tipo,
+    Lote:r.numero_lote,Entrada:r.entrada,Saida:r.saida,Ajuste:r.ajuste,Saldo:r.saldo_corrente,
+    CustoUnit:r.custo_unitario,Estornado:r.estornado?'SIM':'NAO'})),'kardex.xlsx') : toast('Nada para exportar','err');
+  if(pid){ escolher(false); await loadLots(); load(); }
+  else $('#kxResultado').innerHTML='<div class="panel"><div class="empty">Digite um código ou uma descrição para começar.</div></div>';
+};
+
+/* =========================================================
+   IMPORTAÇÃO — wizard com prévia, validação e checksum
+   ========================================================= */
+/* =========================================================
+   IMPORTAÇÃO — wizard com prévia, validação e checksum
+   ========================================================= */
+ROUTES.importacao = async () => {
+  if(!can('admin','auditor')) {
+    $('#view').innerHTML = header('Importação') +
+      '<div class="panel"><div class="empty">Seu perfil não pode importar arquivos.</div></div>'; return; }
+  const { data:hist } = await sb.from('import_batches').select('*').order('created_at',{ascending:false}).limit(25);
+
+  $('#view').innerHTML = header(`Importação de dados <span class="tag t-info" style="font-size:12px;vertical-align:3px">${VERSAO}</span>`,
+    'Leia o Excel do ERP sem editar nada. O sistema mostra a prévia, valida, aponta duplicatas e só grava depois da sua confirmação.') + `
+  <div class="steps">
+    <div class="step on" id="s1"><b>Passo 1</b>Selecionar arquivo</div>
+    <div class="step" id="s2"><b>Passo 2</b>Prévia e validação</div>
+    <div class="step" id="s3"><b>Passo 3</b>Confirmação</div>
+  </div>
+  <div class="hint">O arquivo pode ter as abas <b>Entradas</b> e <b>Saidas</b> juntas — o sistema identifica cada uma pelo cabeçalho.
+  A linha <b>TOTAL</b> é descartada e usada como conferência: se a soma importada não bater com ela, a importação é bloqueada.
+  Números em formato brasileiro (9.300 / 14.446,62) são lidos corretamente.</div>
+  <div class="panel"><div class="pb">
+    <div class="drop" id="drop"><b>Clique aqui para escolher o arquivo</b>
+      <span>ou arraste para esta área — .xlsx, .xls ou .csv · Estoque Atual, Entradas, Saídas</span>
+      <div style="margin-top:14px"><button class="btn" id="pick">Selecionar arquivo</button></div>
+      <div id="diag" style="margin-top:12px;font-size:11.5px;color:var(--tx3)"></div></div>
+    <input type="file" id="file" accept=".xlsx,.xls,.csv,.txt" style="display:none">
+  </div></div>
+  <div id="prev"></div>
+  <div class="panel"><div class="ph"><h3>Histórico de importações</h3></div><div class="pb flush"><div class="scroll">
+  <table><thead><tr><th>Data</th><th>Tipo</th><th>Arquivo</th><th class="num">Linhas</th><th class="num">OK</th>
+    <th class="num">Duplicadas</th><th class="num">Erros</th><th>Situação</th><th></th></tr></thead>
+  <tbody>${(hist||[]).length ? hist.map(b=>`<tr>
+    <td>${dts(b.created_at)}</td><td>${esc(b.tipo)}</td><td>${esc(b.arquivo_nome)}</td>
+    <td class="num">${nf(b.total_linhas)}</td><td class="num pos">${nf(b.linhas_ok)}</td>
+    <td class="num">${nf(b.linhas_duplicadas)}</td><td class="num ${b.linhas_erro?'neg':''}">${nf(b.linhas_erro)}</td>
+    <td><span class="tag ${b.status==='confirmada'?'t-ok':b.status==='estornada'?'t-bad':'t-mut'}">${esc(b.status)}</span></td>
+    <td>${b.status==='confirmada'&&can('admin')?`<a style="cursor:pointer;color:var(--bad)" onclick="voidImport('${b.id}')">estornar</a>`:''}</td>
+  </tr>`).join('') : '<tr><td colspan="9" class="empty">Nenhuma importação ainda.</td></tr>'}</tbody></table>
+  </div></div></div>`;
+
+  const dz = $('#drop');
+  const abrir = e => { e.stopPropagation(); $('#file').click(); };
+  dz.onclick = abrir; $('#pick').onclick = abrir;
+  ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.add('over'); }));
+  ['dragleave','dragend'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.remove('over');
+    const f = e.dataTransfer?.files?.[0];
+    if(!f) return toast('Não recebi nenhum arquivo. Use o botão Selecionar arquivo.', 'err');
+    handleFile(f);
+  });
+  $('#file').onchange = e => { if(e.target.files[0]) handleFile(e.target.files[0]); };
+
+  // se uma biblioteca não carregar, isto aparece na tela em vez de falhar calado
+  const libs = [['Leitor de Excel', () => !!window.XLSX], ['Gráficos', () => !!window.Chart]];
+  $('#diag').innerHTML = `<b>${VERSAO}</b> &nbsp;·&nbsp; ` + libs.map(([n,f]) => `${f()?'✔':'✖'} ${n}`).join(' &nbsp;·&nbsp; ')
+    + ' &nbsp;·&nbsp; lê número em pt-BR (9.300 · R$ 14.446,62) e detecta o formato pelo conteúdo'
+    + (libs.every(([,f])=>f()) ? '' : ' — vou tentar outro servidor ao abrir o arquivo');
+};
+
+window.voidImport = async (id) => {
+  const motivo = prompt('Motivo do estorno (obrigatório e registrado na auditoria):');
+  if(!motivo) return;
+  const { data, error } = await sb.rpc('fn_void_import', { p_batch:id, p_motivo:motivo });
+  if(error) return err(error);
+  toast(`Importação estornada. ${data.movimentos_estornados} movimentos saíram do saldo.`);
+  route();
+};
+
+/* ---------- leitura tolerante do arquivo do ERP ----------
+   O ERP exporta número em pt-BR ("9.300" = nove mil, "14.446,62") e às vezes
+   em CSV mal decodificado ("DescriÃ§Ã£o"). Ler isso de forma ingênua transforma
+   9.300 em 9,3 — um erro que não aparece na tela e destrói o saldo calculado.
+   As três defesas abaixo existem por causa disso.                            */
+
+// texto que foi lido como Latin-1 mas na verdade era UTF-8
+const demoji = s => {
+  if(typeof s !== 'string' || !/[ÃÂ]/.test(s)) return s;
+  try { return new TextDecoder('utf-8').decode(Uint8Array.from(s, c => c.charCodeAt(0) & 0xff)); }
+  catch(e){ return s; }
+};
+// "Disponível", "DisponÃ­vel", "DISPONIVEL " -> "disponivel"
+const norm = s => demoji(String(s??'')).normalize('NFD').replace(/[̀-ͯ]/g,'')
+                    .toLowerCase().replace(/[^a-z0-9]/g,'');
+// número em pt-BR, en-US ou já numérico
+const numBR = v => {
+  if(v===null||v===undefined||v==='') return 0;
+  if(typeof v === 'number') return v;
+  let s = String(v).replace(/[\s ]|R\$/g,'').trim();
+  if(!s) return 0;
+  const neg = /^\(.*\)$/.test(s) || s.startsWith('-');
+  s = s.replace(/[()\-]/g,'');
+  if(s.includes(',')) s = s.replace(/\./g,'').replace(',','.');        // 14.446,62 -> 14446.62
+  else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g,'');      // 9.300 -> 9300 (milhar)
+  const n = Number(s);
+  return isNaN(n) ? 0 : (neg ? -n : n);
+};
+const idx  = row => { const m={}; Object.keys(row).forEach(k => m[norm(k)] = k); return m; };
+const pick = (row,map,...alias) => { for(const a of alias){ const k=map[norm(a)]; if(k!==undefined && row[k]!==null && row[k]!=='') return row[k]; } return null; };
+const txt  = (row,map,...alias) => { const v=pick(row,map,...alias); return v==null?null:demoji(String(v)).trim(); };
+const qty  = (row,map,...alias) => numBR(pick(row,map,...alias));
+
+const isoDate = v => {
+  if(!v) return null;
+  if(v instanceof Date) return new Date(v.getTime()-v.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  const s = String(v).trim();
+  const br = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if(br){ const a = br[3].length===2 ? '20'+br[3] : br[3];
+          return `${a}-${br[2].padStart(2,'0')}-${br[1].padStart(2,'0')}`; }
+  return s.slice(0,10);
+};
+
+const movRow = (r,i) => { const m = idx(r); return {
+  linha:i+2, filial: txt(r,m,'Filial'),
+  data: isoDate(pick(r,m,'Emissão','Emissao','Data','Dt.Emissao')),
+  pedido: txt(r,m,'Pedido'),
+  cliente_codigo: txt(r,m,'Cliente-Loja','Cliente'),
+  cliente_nome: txt(r,m,'Nome Fantasia','Nome','Razao Social'),
+  documento: txt(r,m,'Nr.NF','NF','Nota','Documento'),
+  produto: txt(r,m,'Produto','Codigo','Cod.Produto'),
+  descricao: txt(r,m,'Descrição','Descricao'),
+  lote: txt(r,m,'Lote') || '',
+  qtd: qty(r,m,'Qtd.','Quantidade'),
+  valor: qty(r,m,'R$ Vda.','Valor','Vlr Total'),
+  tes: txt(r,m,'TES'), cfop: txt(r,m,'CFOP'),
+  armazem: txt(r,m,'Armz.','Armaz.','Armazem','Local') || '2' }; };
+
+const SHEETS = {
+  saldo_erp: { rotulo:'Estoque Atual (saldo do ERP)',
+    map: r => { const m = idx(r); return {
+      sku: txt(r,m,'Produto','Codigo','Cod.Produto'),
+      descricao: txt(r,m,'Descrição','Descricao'),
+      grupo: txt(r,m,'Grupo'), tipo: txt(r,m,'Tipo'),
+      unidade: txt(r,m,'UM','Unidade','Un.Medida') || 'UN',
+      armazem: txt(r,m,'Armaz.','Armz.','Armazem','Local') || '2',
+      lote: txt(r,m,'Lote') || '',
+      qtd: qty(r,m,'Saldo Lote','Saldo','Quantidade'),
+      empenho: qty(r,m,'Empenho','Empenhado'),
+      disponivel: qty(r,m,'Disponível','Disponivel','Saldo Disponivel'),
+      valor: qty(r,m,'R$ Tot.Cto.','Custo Total','Valor Total','Valor') }; } },
+  entradas: { rotulo:'Entradas (NF de transferência)', map: movRow },
+  saidas:   { rotulo:'Saídas (NF emitidas)',           map: movRow }
+};
+
+function detectSheet(headers, sheetName){
+  const h = headers.map(norm), n = norm(sheetName);
+  const has = (...ks) => ks.every(k => h.includes(norm(k)));
+  // Entradas e Saidas têm cabeçalho idêntico no ERP: o nome da aba desempata
+  if(has('Emissão','TES') || has('Emissao','TES'))
+    return /said/.test(n) ? 'saidas' : 'entradas';
+  if(has('Produto','Saldo Lote') || has('Produto','Saldo')) return 'saldo_erp';
+  return null;
+}
+
+async function handleFile(file){
+  if(!file) return;
+  const alvo = $('#prev');
+  try{
+    if(alvo) alvo.innerHTML = '<div class="load"><span class="spin"></span>Lendo o arquivo…</div>';
+    await ensureLib(() => window.XLSX, LIB_XLSX, 'SheetJS (leitura de Excel)');
+    await lerArquivo(file);
+  }catch(e){
+    console.error(e);
+    if(alvo) alvo.innerHTML = `<div class="panel"><div class="pb"><div class="msg err" style="display:block">
+      <b>Não consegui ler o arquivo.</b><br>${esc(e.message||e)}<br>
+      <span style="opacity:.8">Se persistir, abra o console do navegador (F12) e me mande o erro.</span>
+    </div></div></div>`;
+    toast(e.message || 'Falha ao ler o arquivo', 'err');
+  }
+}
+
+async function lerArquivo(file){
+  const buf = await file.arrayBuffer();
+  const b = new Uint8Array(buf);
+  /* A extensão mente: muito ERP exporta texto puro com nome .xls, e aí o leitor
+     entra no modo planilha e "adivinha" os números no padrão americano —
+     9.300 vira 9,3 antes de qualquer código meu rodar. Por isso a decisão é pela
+     assinatura do arquivo: PK = xlsx (zip), D0CF = xls binário antigo, resto = texto. */
+  const ehZip   = b[0]===0x50 && b[1]===0x4B;
+  const ehOle   = b[0]===0xD0 && b[1]===0xCF;
+  const ehTexto = !ehZip && !ehOle;
+  // texto: ler tudo como string e converter com as regras de pt-BR
+  const opts = ehTexto ? { type:'array', raw:true, codepage:65001 } : { type:'array', cellDates:true };
+  let wb = XLSX.read(b, opts);
+  if(ehTexto){
+    const t = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]).slice(0,2000);
+    if(t.includes('�')) wb = XLSX.read(b, { type:'array', raw:true, codepage:1252 });
+  }
+  window.__fmt = ehZip ? 'xlsx' : ehOle ? 'xls binário' : 'texto/CSV';
+  const abas = [];
+  wb.SheetNames.forEach(name => {
+    const ws = wb.Sheets[name];
+    const raw = XLSX.utils.sheet_to_json(ws, { defval:null });
+    if(!raw.length) return;
+    const tipo = detectSheet(Object.keys(raw[0]), name);
+    if(!tipo) { abas.push({ name, tipo:null, raw }); return; }
+    const m0 = idx(raw[0]);
+    const ehTotal = r => norm(pick(r, idx(r), 'Descrição','Descricao') || '') === 'total';
+    const totalRow = raw.find(ehTotal);
+    const dados = raw.filter(r => !ehTotal(r))
+      .filter(r => { const m = idx(r); return tipo==='saldo_erp' ? pick(r,m,'Produto','Codigo')
+                                                                : pick(r,m,'Emissão','Emissao','Data'); })
+      .map((r,i) => SHEETS[tipo].map(r,i));
+    const mT = totalRow ? idx(totalRow) : null;
+    abas.push({ name, tipo, dados,
+      checksum: totalRow ? { qtd: qty(totalRow,mT,'Qtd.','Saldo Lote','Quantidade'),
+                             valor: qty(totalRow,mT,'R$ Vda.','R$ Tot.Cto.','Valor'),
+                             linhas: qty(totalRow,mT,'Filial') } : null });
+  });
+  renderPreview(file, abas);
+}
+
+async function renderPreview(file, abas){
+  $('#s1').className='step done'; $('#s2').className='step on';
+  const validas = abas.filter(a=>a.tipo);
+  if(!validas.length){
+    $('#prev').innerHTML = `<div class="panel"><div class="pb"><div class="msg err" style="display:block">
+      Não reconheci nenhuma aba deste arquivo. Esperado: <b>Estoque Atual</b> (com colunas Produto e Saldo Lote)
+      ou <b>Entradas/Saidas</b> (com Emissão, Nr.NF e TES).</div></div></div>`;
+    return;
+  }
+  $('#prev').innerHTML = '<div class="load"><span class="spin"></span>Validando contra a base…</div>';
+
+  const skus = [...new Set(validas.flatMap(a => a.dados.map(r => r.sku || r.produto)))].filter(Boolean);
+  const { data:known } = await sb.from('products').select('sku').in('sku', skus.slice(0,900));
+  const knownSet = new Set((known||[]).map(p=>p.sku));
+  const pares = new Set(S.tesCfop.map(t=>`${t.tes}|${t.cfop}`));
+  const { data:mz } = await sb.from('erp_snapshots').select('codigo,data_referencia').eq('marco_zero',true).maybeSingle();
+
+  let html = '';
+  for(const a of validas){
+    const somaQtd = a.dados.reduce((s,r)=>s+Number(r.qtd||0),0);
+    const somaVal = a.dados.reduce((s,r)=>s+Number(r.valor||0),0);
+    const chkQtd = a.checksum ? Math.abs(somaQtd - a.checksum.qtd) < 0.01 : null;
+    const chkLin = a.checksum ? a.dados.length === a.checksum.linhas : null;
+    const semTes = a.tipo!=='saldo_erp' ? [...new Set(a.dados.filter(r=>!pares.has(`${r.tes}|${r.cfop}`)).map(r=>`${r.tes}/${r.cfop}`))] : [];
+    const semProd = a.tipo!=='saldo_erp' ? [...new Set(a.dados.filter(r=>!knownSet.has(r.produto)).map(r=>r.produto))] : [];
+    const antesMZ = (a.tipo!=='saldo_erp' && mz) ? a.dados.filter(r => r.data && r.data <= mz.data_referencia).length : 0;
+    // Conferência de leitura: no ERP, Saldo = Empenho + Disponível SEMPRE.
+    // Se não fechar, o arquivo foi lido errado (tipicamente separador de milhar
+    // virando decimal). É a trava que impede um saldo errado entrar no razão.
+    const incoer = a.tipo==='saldo_erp'
+      ? a.dados.filter(r => Math.abs(r.qtd - (r.empenho + r.disponivel)) > 0.01).length : 0;
+    const somaDisp = a.tipo==='saldo_erp' ? a.dados.reduce((x,r)=>x+Number(r.disponivel||0),0) : 0;
+    const somaEmp  = a.tipo==='saldo_erp' ? a.dados.reduce((x,r)=>x+Number(r.empenho||0),0) : 0;
+    const bloqueia = (chkQtd===false) || incoer>0;   // TES/CFOP não bloqueia mais: o tipo é você quem declara
+
+    html += `<div class="panel" data-aba="${esc(a.name)}">
+      <div class="ph"><h3>${esc(a.name)} <span class="sub">→ ${SHEETS[a.tipo].rotulo}</span></h3>
+        <span class="tag ${bloqueia?'t-bad':'t-ok'}">${bloqueia?'bloqueado':'pronto'}</span></div>
+      <div class="pb">
+        <div class="cards" style="margin-bottom:14px">
+          <div class="card"><div class="lb">Linhas</div><div class="vl">${nf(a.dados.length)}</div>
+            ${a.checksum?`<div class="ft">${chkLin?'✔ confere com o TOTAL':'⚠ TOTAL indica '+nf(a.checksum.linhas)}</div>`:''}</div>
+          <div class="card"><div class="lb">Quantidade</div><div class="vl" style="font-size:19px">${nf(somaQtd)}</div>
+            ${a.checksum?`<div class="ft">${chkQtd?'✔ confere com o TOTAL':'✖ TOTAL indica '+nf(a.checksum.qtd)}</div>`:''}</div>
+          <div class="card"><div class="lb">Valor</div><div class="vl" style="font-size:19px">${money(somaVal)}</div></div>
+          ${a.tipo!=='saldo_erp'?`<div class="card ${semProd.length?'warn':''}"><div class="lb">Produtos não cadastrados</div>
+            <div class="vl">${nf(semProd.length)}</div><div class="ft">${semProd.slice(0,3).join(', ')||'nenhum'}</div></div>`:''}
+          ${a.tipo==='saldo_erp'?`<div class="card"><div class="lb">Empenhado</div><div class="vl" style="font-size:19px">${nf(somaEmp)}</div></div>
+          <div class="card"><div class="lb">Disponível</div><div class="vl" style="font-size:19px">${nf(somaDisp)}</div>
+            <div class="ft">${incoer?'✖ '+nf(incoer)+' linha(s) não fecham':'✔ saldo = empenho + disponível'}</div></div>`:''}
+        </div>
+        ${incoer?`<div class="msg err" style="display:block"><b>Leitura numérica inconsistente.</b>
+          ${nf(incoer)} linha(s) em que <b>Saldo Lote ≠ Empenho + Disponível</b>. No ERP essa conta sempre fecha,
+          então há perda de informação no arquivo, não na conta. Importação bloqueada.<br>
+          Formato detectado: <b>${esc(window.__fmt||'?')}</b>.
+          ${window.__fmt==='xlsx' ? `Este .xlsx já contém a quantidade arredondada — provavelmente ele nasceu de um
+            CSV aberto no Excel com separador americano, e o valor original se perdeu ali. Exporte de novo
+            <b>direto do ERP em .xlsx</b>, ou abra o CSV pelo assistente de importação do Excel escolhendo
+            <b>Português (Brasil)</b>, sem duplo clique.`
+          : `Reexporte do ERP e me avise se persistir.`}</div>`:''}
+        ${chkQtd===false?`<div class="msg err" style="display:block">A soma das linhas não bate com a linha TOTAL do arquivo.
+          Diferença de ${nf(Math.abs(somaQtd-a.checksum.qtd),2)}. Importação bloqueada — confira a exportação do ERP.</div>`:''}
+        ${a.tipo!=='saldo_erp'?`
+        <div class="filters" style="margin-bottom:2px">
+          <div class="fld" style="min-width:260px"><label>O que é este arquivo?</label>
+            <select id="tp_${esc(a.name)}">
+              <option value="SAIDA"${a.tipo==='saidas'?' selected':''}>Saída — baixa do estoque</option>
+              <option value="ENTRADA"${a.tipo==='entradas'?' selected':''}>Entrada — soma ao estoque</option>
+            </select></div>
+          <div class="fld" id="wrap_tr_${esc(a.name)}" style="min-width:300px"><label>&nbsp;</label>
+            <label style="font-weight:400"><input type="checkbox" id="tr_${esc(a.name)}" style="width:auto;margin-right:7px">
+            Ainda não conferido fisicamente (entra em trânsito)</label></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--tx3);margin-bottom:12px">
+          O sistema sugeriu pelo nome da aba. Se estiver errado, troque aqui — é isto que define se o movimento soma ou subtrai.
+          Devolução e cancelamento não se importam por arquivo: são feitos com um clique na tela de Movimentações,
+          sobre a saída que os originou, para o vínculo entre as duas notas não se perder.
+        </div>`:''}
+        ${antesMZ?`<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
+          <b>Atenção — risco de contagem em dobro.</b> ${nf(antesMZ)} linha(s) têm data igual ou anterior ao Marco Zero
+          (${esc(mz.codigo)}, ${dt(mz.data_referencia)}). O saldo daquela fotografia já embutia essas movimentações.
+          Importe apenas movimentos <b>posteriores</b> a ${dt(mz.data_referencia)}, ou refaça o Marco Zero com a data anterior ao período.</div>`:''}
+        ${semProd.length?`<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
+          ${semProd.length} produto(s) sem cadastro serão recusados: ${esc(semProd.slice(0,8).join(', '))}${semProd.length>8?'…':''}.
+          Importe o Estoque Atual primeiro para criar o cadastro.</div>`:''}
+        ${a.tipo==='saldo_erp'?`<div class="filters" style="margin-bottom:4px">
+          <div class="fld"><label>Data de referência do saldo</label>
+            <input type="date" id="dr_${esc(a.name)}" value="${new Date().toISOString().slice(0,10)}"></div></div>
+        <div class="fld" style="max-width:420px">
+          <label><input type="checkbox" id="mz_${esc(a.name)}" style="width:auto;margin-right:7px">
+          Usar como <b>Marco Zero</b> (saldo inicial do razão)</label>
+          <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">Marque apenas na primeira carga. Cria o saldo de partida de cada lote.</div></div>`:''}
+        <div class="scroll" style="max-height:230px;margin-top:12px"><table>
+          <thead><tr>${Object.keys(a.dados[0]).map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead>
+          <tbody>${a.dados.slice(0,8).map(r=>`<tr>${Object.values(r).map(v=>`<td>${esc(v==null?'—':v)}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table></div>
+        <div style="margin-top:14px">
+          <button class="btn" ${bloqueia?'disabled':''} data-go="${esc(a.name)}">Confirmar importação desta aba</button>
+        </div>
+      </div></div>`;
+  }
+  $('#prev').innerHTML = html;
+  validas.forEach(a => {
+    const b = $(`[data-go="${CSS.escape(a.name)}"]`); if(!b) return;
+    b.onclick = () => runImport(file, a, b);
+  });
+}
+
+async function runImport(file, aba, btn){
+  btn.disabled = true; btn.textContent = 'Importando…';
+  $('#s3').className='step on';
+  try{
+    const { data:batch, error:e1 } = await sb.from('import_batches').insert({
+      branch_id:S.branch, tipo:aba.tipo, arquivo_nome:file.name, aba:aba.name,
+      total_linhas:aba.dados.length, checksum_qtd:aba.checksum?.qtd ?? null,
+      checksum_valor:aba.checksum?.valor ?? null, checksum_ok:true, user_id:S.user.id
+    }).select().single();
+    if(e1) throw e1;
+
+    const CH = 300; let acc = { inseridos:0, atualizados:0, duplicados:0, erros:0, detalhe:[], snapshot:null };
+    for(let i=0;i<aba.dados.length;i+=CH){
+      const chunk = aba.dados.slice(i,i+CH);
+      btn.textContent = `Importando… ${Math.min(i+CH, aba.dados.length)}/${aba.dados.length}`;
+      let res;
+      if(aba.tipo==='saldo_erp'){
+        const mz = !!$(`#mz_${CSS.escape(aba.name)}`)?.checked;
+        const dref = $(`#dr_${CSS.escape(aba.name)}`)?.value || new Date().toISOString().slice(0,10);
+        res = await sb.rpc('fn_import_erp_snapshot', { p_batch:batch.id, p_rows:chunk,
+          p_data_ref:dref, p_marco_zero:mz, p_snapshot:acc.snapshot||null });
+        if(res.error) throw res.error;
+        acc.snapshot = res.data.snapshot_id;      // blocos seguintes gravam na MESMA fotografia
+        acc.inseridos += res.data.itens||0;
+      }else if(aba.tipo==='produtos'){
+        res = await sb.rpc('fn_import_products', { p_batch:batch.id, p_rows:chunk });
+        if(res.error) throw res.error;
+        acc.inseridos += res.data.inseridos||0; acc.atualizados += res.data.atualizados||0; acc.erros += res.data.erros||0;
+      }else{
+        const tipoDecl = $(`#tp_${CSS.escape(aba.name)}`)?.value || (aba.tipo==='entradas'?'ENTRADA':'SAIDA');
+        const transito = !!$(`#tr_${CSS.escape(aba.name)}`)?.checked;
+        res = await sb.rpc('fn_import_movements', { p_batch:batch.id, p_rows:chunk,
+          p_tipo:tipoDecl, p_em_transito:transito });
+        if(res.error) throw res.error;
+        acc.inseridos += res.data.inseridos||0; acc.duplicados += res.data.duplicados||0; acc.erros += res.data.erros||0;
+        (res.data.detalhe_erros||[]).forEach(d => acc.detalhe.length<20 && acc.detalhe.push(d));
+      }
+    }
+    await sb.from('import_batches').update({ total_linhas:aba.dados.length, linhas_ok:acc.inseridos,
+      linhas_duplicadas:acc.duplicados, linhas_erro:acc.erros, status:'confirmada' }).eq('id',batch.id);
+
+    $('#s3').className='step done';
+    modal('Importação concluída', `
+      <div class="cards">
+        <div class="card ok"><div class="lb">Gravados</div><div class="vl">${nf(acc.inseridos)}</div></div>
+        <div class="card"><div class="lb">Já existiam</div><div class="vl">${nf(acc.duplicados)}</div><div class="ft">ignorados pela idempotência</div></div>
+        <div class="card ${acc.erros?'bad':''}"><div class="lb">Recusados</div><div class="vl">${nf(acc.erros)}</div></div>
+      </div>
+      ${acc.detalhe.length?`<div class="panel" style="margin-top:8px"><div class="ph"><h3>Linhas recusadas</h3></div>
+        <div class="pb flush"><div class="scroll" style="max-height:280px"><table><thead><tr><th>Linha</th><th>Motivo</th></tr></thead>
+        <tbody>${acc.detalhe.map(d=>`<tr><td>${esc(d.linha)}</td><td>${esc(d.erro)}</td></tr>`).join('')}</tbody></table></div></div></div>`:''}
+      <div style="margin-top:16px;display:flex;gap:8px">
+        <button class="btn" onclick="document.querySelector('.modal').remove(); route()">Continuar importando</button>
+        <button class="btn gh" onclick="location.hash='movimentos';document.querySelector('.modal').remove()">Ver movimentações</button>
+      </div>`, true);
+  }catch(e){ err(e); btn.disabled=false; btn.textContent='Confirmar importação desta aba'; }
+}
+
+/* =========================================================
+   EM TRÂNSITO — conferência do que a matriz expediu
+   ========================================================= */
+ROUTES.transito = async () => {
+  const { data, error } = await sb.from('v_transito').select('*').order('dias_em_transito',{ascending:false});
+  if(error) return err(error);
+  const tot = data.reduce((a,r)=>a+Number(r.valor_custo||0),0);
+  const lim = S.settings.transito_alerta_dias || 3;
+
+  $('#view').innerHTML = header('Material em trânsito',
+    'A NF de transferência é emitida pela matriz (101). Enquanto o recebimento não for conferido, a quantidade aparece no Kardex mas <b>não entra no saldo</b>.') + `
+  <div class="cards">
+    <div class="card info"><div class="lb">Notas pendentes</div><div class="vl">${nf(data.length)}</div></div>
+    <div class="card"><div class="lb">Valor em trânsito</div><div class="vl" style="font-size:19px">${money(tot)}</div></div>
+    <div class="card ${data.some(r=>r.dias_em_transito>lim)?'bad':''}"><div class="lb">Acima de ${lim} dias</div>
+      <div class="vl">${nf(data.filter(r=>r.dias_em_transito>lim).length)}</div></div>
+  </div>
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>NF</th><th>Origem</th><th>Emissão</th><th class="num">Dias</th><th>Produto</th><th>Lote</th>
+      <th class="num">Qtd NF</th><th class="num">Valor</th><th>Situação</th><th></th></tr></thead>
+    <tbody>${data.length ? data.map(r=>`<tr>
+      <td class="mono">${esc(r.documento||'—')}</td><td>${esc(r.filial_origem||'—')}</td>
+      <td>${dt(r.data_emissao)}</td>
+      <td class="num ${r.dias_em_transito>lim?'neg':''}">${nf(r.dias_em_transito)}</td>
+      <td class="mono">${esc(r.sku)}</td><td class="mono">${esc(r.numero_lote||'—')}</td>
+      <td class="num">${nf(r.quantidade)}</td><td class="num">${money(r.valor_custo)}</td>
+      <td>${r.status_transito==='DIVERGENTE'?'<span class="tag t-bad">divergente</span>':'<span class="tag t-info">aguardando</span>'}</td>
+      <td>${can('admin','auditor','operacional')?`<button class="btn sm gh" onclick="conferir('${r.id}','${esc(r.documento)}','${esc(r.sku)}',${r.quantidade})">Conferir</button>`:''}</td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">Nada em trânsito.</td></tr>'}</tbody>
+  </table></div></div></div>`;
+};
+
+window.conferir = (id, doc, sku, qtd) => {
+  const m = modal('Conferência de recebimento', `
+    <div class="hint">Informe a quantidade <b>fisicamente recebida</b>. Se for diferente da NF, o sistema registra a divergência
+    no ato e ela passa a constar nos alertas — é assim que a falta na transferência deixa de virar "sumiço" na filial.</div>
+    <dl class="kv" style="margin-bottom:18px">
+      <dt>Nota fiscal</dt><dd class="mono">${esc(doc)}</dd>
+      <dt>Produto</dt><dd class="mono">${esc(sku)}</dd>
+      <dt>Quantidade da NF</dt><dd>${nf(qtd)}</dd></dl>
+    <div class="fld"><label>Quantidade recebida</label><input id="qr" type="number" step="0.0001" value="${qtd}"></div>
+    <div class="fld"><label>Observação</label><textarea id="ob" rows="2" placeholder="opcional"></textarea></div>
+    <div id="dv" style="margin:10px 0 16px;font-size:13px"></div>
+    <button class="btn" id="ok">Registrar recebimento</button>`);
+  const calc = () => { const d = Number(m.querySelector('#qr').value||0) - qtd;
+    m.querySelector('#dv').innerHTML = d===0 ? '<span class="tag t-ok">sem divergência</span>'
+      : `<span class="tag t-bad">divergência de ${nf(d)}</span>`; };
+  m.querySelector('#qr').oninput = calc; calc();
+  m.querySelector('#ok').onclick = async () => {
+    const { data, error } = await sb.rpc('fn_confirmar_recebimento', {
+      p_movement:id, p_qtd_recebida:Number(m.querySelector('#qr').value||0),
+      p_observacao:m.querySelector('#ob').value||null });
+    if(error) return err(error);
+    m.remove();
+    toast(data.divergencia===0 ? 'Recebimento confirmado e saldo atualizado.'
+      : `Recebimento registrado com divergência de ${nf(data.divergencia)}. Já está nos alertas.`);
+    route();
+  };
+};
+
+/* =========================================================
+   CONCILIAÇÃO ERP x SISTEMA
+   ========================================================= */
+ROUTES.conciliacao = async () => {
+  const [{data:snaps}, {data:recs}] = await Promise.all([
+    sb.from('erp_snapshots').select('*').order('data_referencia',{ascending:false}).limit(50),
+    sb.from('reconciliations').select('*').order('data_execucao',{ascending:false}).limit(50)
+  ]);
+  $('#view').innerHTML = header('Conciliação ERP × Sistema',
+    'Compara o saldo do ERP com o saldo reconstruído pelas movimentações. Cada execução vira uma fotografia imutável — é o que permite ver a tendência.') + `
+  ${can('admin','auditor')?`<div class="panel"><div class="ph"><h3>Executar nova conciliação</h3></div><div class="pb">
+    <div class="filters">
+      <div class="fld" style="min-width:340px"><label>Fotografia do ERP</label><select id="snap">
+        ${(snaps||[]).map(s=>`<option value="${s.id}">${esc(s.codigo)} — ${dt(s.data_referencia)} · ${nf(s.total_itens)} itens · ${money(s.total_valor)}${s.marco_zero?' (Marco Zero)':''}</option>`).join('')
+          || '<option value="">Nenhuma — importe o Estoque Atual primeiro</option>'}</select></div>
+      <div class="fld"><label>Nível</label><select id="niv"><option value="lote">Por lote</option><option value="produto">Por produto</option></select></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn" id="run" ${(snaps||[]).length?'':'disabled'}>Executar</button></div>
+    </div></div></div>`:''}
+  <div class="panel"><div class="ph"><h3>Conciliações realizadas</h3></div><div class="pb flush"><div class="scroll">
+  <table><thead><tr><th>Código</th><th>Data</th><th class="num">Itens</th><th class="num">Conformes</th>
+    <th class="num">Divergentes</th><th class="num">Qtd divergente</th><th class="num">Divergência R$</th>
+    <th class="num">Acuracidade</th><th></th></tr></thead>
+  <tbody>${(recs||[]).length ? recs.map(r=>`<tr>
+    <td class="mono">${esc(r.codigo)}</td><td>${dts(r.data_execucao)}</td>
+    <td class="num">${nf(r.total_itens)}</td><td class="num pos">${nf(r.itens_conformes)}</td>
+    <td class="num ${r.itens_divergentes?'neg':''}">${nf(r.itens_divergentes)}</td>
+    <td class="num">${nf(r.qtd_divergente)}</td><td class="num neg">${money(r.valor_divergente_abs)}</td>
+    <td class="num">${r.acuracidade_itens===null?'—':pct(r.acuracidade_itens*100)}</td>
+    <td><a style="cursor:pointer" onclick="location.hash='divergencias?r=${r.id}'">abrir</a></td>
+  </tr>`).join('') : '<tr><td colspan="9" class="empty">Nenhuma conciliação. Importe o Estoque Atual e as movimentações primeiro.</td></tr>'}</tbody>
+  </table></div></div></div>
+  ${(recs||[]).length>1?`<div class="panel"><div class="ph"><h3>Tendência da divergência</h3>
+    <span class="sub">se a linha sobe, o problema está piorando</span></div>
+    <div class="pb"><div class="chartbox"><canvas id="ch"></canvas></div></div></div>`:''}`;
+
+  if($('#run')) $('#run').onclick = async () => {
+    $('#run').disabled = true; $('#run').textContent = 'Executando…';
+    const { data, error } = await sb.rpc('fn_run_reconciliation', { p_snapshot:$('#snap').value, p_nivel:$('#niv').value });
+    if(error){ err(error); $('#run').disabled=false; $('#run').textContent='Executar'; return; }
+    toast('Conciliação concluída.'); location.hash = 'divergencias?r=' + data;
+  };
+
+  if((recs||[]).length>1){
+    const ord = [...recs].reverse();
+    new Chart($('#ch'), { type:'line',
+      data:{ labels:ord.map(r=>dt(r.data_execucao)), datasets:[
+        { label:'Divergência R$', data:ord.map(r=>Number(r.valor_divergente_abs)), borderColor:'#f85149',
+          backgroundColor:'rgba(248,81,73,.12)', fill:true, tension:.25, yAxisID:'y' },
+        { label:'Itens divergentes', data:ord.map(r=>r.itens_divergentes), borderColor:'#d29922', tension:.25, yAxisID:'y1' }]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ labels:{ color:'#8b98a9' } } },
+        scales:{ x:{ ticks:{color:'#8b98a9'}, grid:{color:'#242e3b'} },
+                 y:{ ticks:{color:'#8b98a9'}, grid:{color:'#242e3b'} },
+                 y1:{ position:'right', ticks:{color:'#8b98a9'}, grid:{display:false} } } } });
+  }
+};
+
+/* =========================================================
+   DIVERGÊNCIAS + INVESTIGAÇÃO
+   ========================================================= */
+ROUTES.divergencias = async () => {
+  const rid = new URLSearchParams((location.hash.split('?')[1]||'')).get('r');
+  let rec;
+  if(rid) ({ data:rec } = await sb.from('reconciliations').select('*').eq('id',rid).maybeSingle());
+  else ({ data:rec } = await sb.from('reconciliations').select('*').order('data_execucao',{ascending:false}).limit(1).maybeSingle());
+  if(!rec){ $('#view').innerHTML = header('Divergências') + '<div class="panel"><div class="empty">Nenhuma conciliação executada ainda.</div></div>'; return; }
+
+  const items = await fetchAll(() => sb.from('reconciliation_items').select('*')
+    .eq('reconciliation_id',rec.id).neq('classificacao','conforme')
+    .order('impacto_valor',{ascending:true}));
+
+  const LB = { div_negativa:['Divergência negativa','t-bad'], div_positiva:['Divergência positiva','t-warn'],
+    div_critica:['Crítica','t-bad'], item_fantasma:['Item fantasma','t-info'], item_invisivel:['Item invisível','t-info'] };
+  const perda = items.filter(i=>i.impacto_valor<0).reduce((a,i)=>a+Number(i.impacto_valor),0);
+  const ganho = items.filter(i=>i.impacto_valor>0).reduce((a,i)=>a+Number(i.impacto_valor),0);
+
+  $('#view').innerHTML = header(`Divergências — ${esc(rec.codigo)}`,
+    'Divergência não é furto. É diferença que precisa ser investigada — o sistema mostra as evidências, a conclusão é sua.',
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="cards">
+    <div class="card"><div class="lb">Itens analisados</div><div class="vl">${nf(rec.total_itens)}</div></div>
+    <div class="card bad"><div class="lb">Divergentes</div><div class="vl">${nf(rec.itens_divergentes)}</div></div>
+    <div class="card bad"><div class="lb">Falta (ERP &gt; sistema)</div><div class="vl" style="font-size:19px">${money(perda)}</div></div>
+    <div class="card warn"><div class="lb">Sobra (sistema &gt; ERP)</div><div class="vl" style="font-size:19px">${money(ganho)}</div></div>
+    <div class="card ${rec.acuracidade_itens>=0.98?'ok':'warn'}"><div class="lb">Acuracidade de itens</div>
+      <div class="vl">${rec.acuracidade_itens===null?'—':pct(rec.acuracidade_itens*100)}</div></div>
+    <div class="card"><div class="lb">Acuracidade financeira</div>
+      <div class="vl">${rec.acuracidade_financeira===null?'—':pct(rec.acuracidade_financeira*100)}</div></div>
+  </div>
+  <div class="filters">
+    <div class="fld" style="min-width:240px"><label>Buscar</label><input id="q" placeholder="código, descrição ou lote"></div>
+    <div class="fld"><label>Classificação</label><select id="cl"><option value="">Todas</option>
+      ${Object.entries(LB).map(([k,v])=>`<option value="${k}">${v[0]}</option>`).join('')}</select></div>
+    <div class="fld"><label>Impacto mínimo (R$)</label><input id="vmin" type="number" value="0" style="width:150px"></div>
+  </div>
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th class="num">Saldo ERP</th>
+      <th class="num">Saldo sistema</th><th class="num">Diferença</th><th class="num">%</th>
+      <th class="num">Custo unit.</th><th class="num">Impacto R$</th><th>Classificação</th><th></th></tr></thead>
+    <tbody id="tb"></tbody></table></div></div></div>`;
+
+  const draw = () => {
+    const q=$('#q').value.toLowerCase(), cl=$('#cl').value, vmin=Number($('#vmin').value||0);
+    const f = items.filter(i =>
+      (!q || (i.sku+' '+(i.descricao||'')+' '+(i.numero_lote||'')).toLowerCase().includes(q)) &&
+      (!cl || i.classificacao===cl) && (Math.abs(Number(i.impacto_valor)) >= vmin));
+    $('#tb').innerHTML = f.length ? f.slice(0,800).map(i=>`<tr>
+      <td class="mono">${esc(i.sku)}</td><td>${esc(i.descricao||'—')}</td><td class="mono">${esc(i.numero_lote||'—')}</td>
+      <td class="num">${nf(i.qtd_erp)}</td><td class="num">${nf(i.qtd_calculada)}</td>
+      <td class="num ${sgn(i.diferenca)}">${nf(i.diferenca)}</td>
+      <td class="num">${i.perc_diferenca===null?'N/A':pct(i.perc_diferenca)}</td>
+      <td class="num">${money(i.custo_unitario)}</td>
+      <td class="num ${sgn(i.impacto_valor)}"><b>${money(i.impacto_valor)}</b></td>
+      <td><span class="tag ${LB[i.classificacao]?.[1]||'t-mut'}">${LB[i.classificacao]?.[0]||i.classificacao}</span></td>
+      <td><a style="cursor:pointer" onclick="investigar('${i.id}')">investigar</a>${i.product_id?` · <a style="cursor:pointer" onclick="location.hash='produto?id=${i.product_id}'">x-ray</a>`:''}</td>
+    </tr>`).join('') : '<tr><td colspan="11" class="empty">Nenhuma divergência com esses filtros.</td></tr>';
+  };
+  draw(); ['q','cl','vmin'].forEach(i=>{ $('#'+i).oninput=draw; $('#'+i).onchange=draw; });
+  window.__divs = items;
+  $('#exp').onclick = () => toXlsx(items.map(i=>({Codigo:i.sku,Descricao:i.descricao,Lote:i.numero_lote,
+    SaldoERP:i.qtd_erp,SaldoSistema:i.qtd_calculada,Diferenca:i.diferenca,PercDiferenca:i.perc_diferenca,
+    CustoUnit:i.custo_unitario,ImpactoRS:i.impacto_valor,Classificacao:i.classificacao})), `divergencias-${rec.codigo}.xlsx`);
+};
+
+window.investigar = async (itemId) => {
+  const i = (window.__divs||[]).find(x=>x.id===itemId); if(!i) return;
+  const m = modal(`Investigar divergência — ${i.sku}`, '<div class="load"><span class="spin"></span>Reunindo evidências…</div>', true);
+  const { data:kx } = await sb.rpc('fn_kardex', { p_product:i.product_id, p_lot:i.lot_id, p_de:null, p_ate:null,
+    p_tipos:null, p_documento:null, p_user:null, p_limit:60, p_offset:0 });
+  const { data:lot } = i.lot_id ? await sb.from('v_lots_live').select('*').eq('lot_id',i.lot_id).maybeSingle() : {data:null};
+  const mv = kx||[];
+  const ult = t => { const r=[...mv].reverse().find(x=>x.tipo===t); return r?dt(r.movement_date):'—'; };
+
+  m.querySelector('.mb').innerHTML = `
+  <div class="cards">
+    <div class="card"><div class="lb">Saldo ERP</div><div class="vl">${nf(i.qtd_erp)}</div></div>
+    <div class="card"><div class="lb">Saldo do sistema</div><div class="vl">${nf(i.qtd_calculada)}</div></div>
+    <div class="card ${i.diferenca<0?'bad':'warn'}"><div class="lb">Diferença</div><div class="vl">${nf(i.diferenca)}</div>
+      <div class="ft">${money(i.impacto_valor)}</div></div>
+  </div>
+  <dl class="kv" style="margin:6px 0 20px">
+    <dt>Produto</dt><dd>${esc(i.sku)} — ${esc(i.descricao||'')}</dd>
+    <dt>Lote / armazém</dt><dd class="mono">${esc(i.numero_lote||'—')} / ${esc(i.armazem||'—')}</dd>
+    <dt>Entrada do lote</dt><dd>${dt(lot?.data_entrada)}${lot?.dias_em_estoque!=null?` <span class="mut">(${nf(lot.dias_em_estoque)} dias em estoque)</span>`:''}</dd>
+    <dt>Última entrada</dt><dd>${ult('ENTRADA')}</dd>
+    <dt>Última saída</dt><dd>${ult('SAIDA')}</dd>
+    <dt>Último ajuste</dt><dd>${ult('AJUSTE_NEGATIVO')!=='—'?ult('AJUSTE_NEGATIVO'):ult('AJUSTE_POSITIVO')}</dd>
+    <dt>Último inventário</dt><dd>${dt(lot?.data_ultimo_inventario)}${lot?.dias_sem_inventario!=null?` <span class="mut">(${nf(lot.dias_sem_inventario)} dias)</span>`:''}</dd>
+  </dl>
+  <h3 style="font-size:13px;margin-bottom:14px">Linha do tempo do lote</h3>
+  <div class="tl">${mv.length ? mv.map(r=>`
+    <div class="it ${r.ajuste?'adj':r.entrada?'pos':'neg'}">
+      <div class="dt">${dt(r.movement_date)} · ${esc(r.documento||'sem documento')}</div>
+      <div class="ds"><b>${esc(r.tipo)}</b> ${r.entrada?`+${nf(r.entrada)}`:r.saida?`−${nf(r.saida)}`:nf(r.ajuste)}
+        → saldo ${nf(r.saldo_corrente)}${r.em_transito?' <span class="tag t-info">em trânsito</span>':''}
+        ${r.cliente_nome?` <span class="mut">· ${esc(r.cliente_nome)}</span>`:''}</div>
+    </div>`).join('') : '<div class="empty">Sem movimentação registrada para este lote — a divergência é o próprio saldo do ERP sem lastro.</div>'}
+    <div class="it neg"><div class="dt">${dts(new Date())}</div>
+      <div class="ds"><b>DIVERGÊNCIA IDENTIFICADA</b> ${nf(i.diferenca)} (${money(i.impacto_valor)})</div></div>
+  </div>`;
+};
+
+
+
+/* =========================================================
+   X-RAY DO PRODUTO — a resposta inteira sobre um item, num lugar só
+   ========================================================= */
+ROUTES.produto = async () => {
+  const pid = new URLSearchParams((location.hash.split('?')[1]||'')).get('id');
+  if(!pid){ $('#view').innerHTML = header('X-Ray do produto',
+    'Use a busca na barra lateral: código, descrição, lote ou número de nota.') +
+    '<div class="panel"><div class="empty">Nenhum produto selecionado.</div></div>'; return; }
+
+  const { data:rx, error } = await sb.rpc('fn_raio_x', { p_product:pid, p_meses:12 });
+  if(error) return err(error);
+  const p = rx.produto, sl = rx.saldo || {}, g = rx.giro || {}, rs = rx.resumo || {};
+  if(!p) return err(new Error('Produto não encontrado'));
+
+  const CL = { CRITICO:'bad', BAIXO:'warn', ADEQUADO:'ok', EXCESSO:'info' };
+  const perdaAcum = (rx.ajustes||[]).reduce((a,x)=>a+Number(x.valor_ajustado||0),0);
+
+  $('#view').innerHTML = header(`${esc(p.sku)} <span class="mut" style="font-weight:400;font-size:15px">${esc(p.descricao)}</span>`,
+    `${esc(p.grupo||'sem grupo')} · ${esc(p.unidade)} · custo ${money(p.custo_unitario)}${p.custo_atualizado_em?` (em ${dt(p.custo_atualizado_em)})`:''}`,
+    `<button class="btn gh sm" onclick="location.hash='kardex?p=${pid}'">Kardex completo</button>
+     <button class="btn gh sm" id="expRx">Exportar Excel</button>`) + `
+
+  ${(rx.alertas||[]).length ? `<div class="sec">${rx.alertas.map(a=>`
+    <div class="alert"><div class="ic">${a.severidade==='alta'?'🔴':'🟠'}</div>
+      <div><div class="tt">${esc(a.regra.replace(/_/g,' '))}</div>
+      <div class="ms">${esc(a.mensagem)}</div></div></div>`).join('')}</div>` : ''}
+
+  <div class="cards">
+    <div class="card"><div class="lb">Saldo atual</div><div class="vl">${nf(sl.qtd_atual)}</div>
+      <div class="ft">${esc(p.unidade)} em ${nf(sl.lotes_com_saldo)} lote(s)</div></div>
+    <div class="card"><div class="lb">Valor parado</div><div class="vl" style="font-size:19px">${money(sl.valor_atual)}</div></div>
+    <div class="card ${CL[g.status]||''}"><div class="lb">Cobertura</div>
+      <div class="vl">${g.cobertura_meses===null||g.cobertura_meses===undefined?'—':nf(g.cobertura_meses,1)+' m'}</div>
+      <div class="ft">${esc(g.status||'—')}</div></div>
+    <div class="card"><div class="lb">Saída média/mês</div><div class="vl" style="font-size:19px">${nf(g.consumo_medio)}</div>
+      <div class="ft">${nf(g.meses_com_dados)} mês(es) de histórico</div></div>
+    <div class="card"><div class="lb">Idade do saldo</div>
+      <div class="vl">${g.idade_media_dias===null||g.idade_media_dias===undefined?'—':nf(g.idade_media_dias,0)+' d'}</div>
+      <div class="ft">${g.idade_confiavel===false?'parcial — parte veio do Marco Zero':'pelo fluxo de entradas'}</div></div>
+    <div class="card ${sl.data_ultimo_inventario?'':'warn'}"><div class="lb">Último inventário</div>
+      <div class="vl" style="font-size:19px">${sl.data_ultimo_inventario?dt(sl.data_ultimo_inventario):'nunca'}</div></div>
+    <div class="card ${rs.ajustes_num?'warn':''}"><div class="lb">Ajustes já sofridos</div><div class="vl">${nf(rs.ajustes_num)}</div>
+      <div class="ft">${money(perdaAcum)} de impacto</div></div>
+    <div class="card ${(rx.divergencias||[]).length?'bad':''}"><div class="lb">Divergências</div>
+      <div class="vl">${nf((rx.divergencias||[]).length)}</div><div class="ft">nas conciliações</div></div>
+  </div>
+
+  <div class="grid2 sec">
+    <div class="panel" style="margin:0"><div class="ph"><h3>Consumo mensal</h3>
+      <span class="sub">últimos 12 meses</span></div>
+      <div class="pb">${(rx.consumo||[]).length?'<div class="chartbox"><canvas id="rxc"></canvas></div>'
+        :'<div class="empty">Sem histórico de saída ainda. Aparece conforme as importações diárias forem acumulando.</div>'}</div></div>
+    <div class="panel" style="margin:0"><div class="ph"><h3>Resumo do histórico</h3></div>
+      <div class="pb"><dl class="kv">
+        <dt>Total que entrou</dt><dd class="pos">${nf(rs.entradas)}</dd>
+        <dt>Total que saiu</dt><dd class="neg">${nf(rs.saidas)}</dd>
+        <dt>Movimentos registrados</dt><dd>${nf(rs.movimentos)}</dd>
+        <dt>Ajustes</dt><dd>${nf(rs.ajustes_num)} (${nf(rs.ajustes_qtd)} ${esc(p.unidade)})</dd>
+        <dt>Sem saída há</dt><dd>${g.dias_sem_saida===null||g.dias_sem_saida===undefined?'—':nf(g.dias_sem_saida)+' dias'}</dd>
+        <dt>Última movimentação</dt><dd>${dt(sl.ultima_movimentacao)}</dd>
+        <dt>Rastreabilidade</dt><dd>${g.sem_rastreio?'<span class="tag t-mut">só lote genérico</span>':'<span class="tag t-ok">lote rastreável</span>'}</dd>
+        <dt>Estoque mínimo / ideal</dt><dd>${p.estoque_minimo?nf(p.estoque_minimo):'não definido'} / ${p.estoque_ideal_mensal?nf(p.estoque_ideal_mensal):'não definido'}</dd>
+      </dl></div></div>
+  </div>
+
+  <div class="panel"><div class="ph"><h3>Lotes com saldo</h3><span class="sub">${nf((rx.lotes||[]).length)}</span></div>
+    <div class="pb flush"><div class="scroll" style="max-height:300px"><table>
+    <thead><tr><th>Lote</th><th>Arm.</th><th>Entrada</th><th class="num">Dias</th><th class="num">Saldo</th>
+      <th class="num">Valor</th><th>Últ. inventário</th></tr></thead>
+    <tbody>${(rx.lotes||[]).length ? rx.lotes.map(l=>`<tr>
+      <td class="mono">${esc(l.numero_lote)}${l.lote_generico?' <span class="tag t-mut">genérico</span>':''}</td>
+      <td>${esc(l.armazem)}</td><td>${dt(l.data_entrada)}${l.idade_estimada?' <span class="tag t-info">MZ</span>':''}</td>
+      <td class="num">${nf(l.dias_em_estoque)}</td><td class="num">${nf(l.qtd_atual)}</td>
+      <td class="num">${money(l.valor_atual)}</td><td>${dt(l.data_ultimo_inventario)}</td>
+    </tr>`).join('') : '<tr><td colspan="7" class="empty">Sem saldo em lote.</td></tr>'}</tbody></table></div></div></div>
+
+  ${(rx.divergencias||[]).length ? `<div class="panel"><div class="ph"><h3>Divergências nas conciliações</h3></div>
+    <div class="pb flush"><table>
+    <thead><tr><th>Conciliação</th><th>Data</th><th>Lote</th><th class="num">ERP</th><th class="num">Sistema</th>
+      <th class="num">Diferença</th><th class="num">Impacto</th><th>Classificação</th></tr></thead>
+    <tbody>${rx.divergencias.map(d=>`<tr>
+      <td class="mono">${esc(d.codigo)}</td><td>${dts(d.data_execucao)}</td><td class="mono">${esc(d.numero_lote||'—')}</td>
+      <td class="num">${nf(d.qtd_erp)}</td><td class="num">${nf(d.qtd_calculada)}</td>
+      <td class="num ${sgn(d.diferenca)}">${nf(d.diferenca)}</td>
+      <td class="num ${sgn(d.impacto_valor)}">${money(d.impacto_valor)}</td>
+      <td><span class="tag t-bad">${esc(d.classificacao.replace('_',' '))}</span></td>
+    </tr>`).join('')}</tbody></table></div></div>` : ''}
+
+  ${(rx.inventarios||[]).length ? `<div class="panel"><div class="ph"><h3>Inventários deste item</h3></div>
+    <div class="pb flush"><table>
+    <thead><tr><th>Código</th><th>Corte</th><th>Lote</th><th class="num">Esperado</th><th class="num">Contado</th>
+      <th class="num">Divergência</th><th class="num">Impacto</th><th>Motivo</th><th>Situação</th></tr></thead>
+    <tbody>${rx.inventarios.map(i=>`<tr>
+      <td class="mono">${esc(i.codigo)}</td><td>${dts(i.data_hora_corte)}</td><td class="mono">${esc(i.numero_lote||'—')}</td>
+      <td class="num">${nf(i.expected_qty)}</td><td class="num">${nf(i.counted_qty)}</td>
+      <td class="num ${sgn(i.divergencia)}">${nf(i.divergencia)}</td>
+      <td class="num ${sgn(i.impacto_valor)}">${money(i.impacto_valor)}</td>
+      <td>${esc(i.motivo||'—')}</td><td><span class="tag ${i.status==='aprovado'?'t-ok':'t-warn'}">${esc(i.status)}</span></td>
+    </tr>`).join('')}</tbody></table></div></div>` : ''}
+
+  <div class="panel"><div class="ph"><h3>Linha do tempo</h3>
+    <span class="sub">últimos ${nf((rx.movimentos||[]).length)} movimentos</span></div>
+    <div class="pb">${(rx.movimentos||[]).length ? `<div class="tl">${rx.movimentos.map(m=>`
+      <div class="it ${/AJUSTE/.test(m.tipo)?'adj':m.sinal>0?'pos':'neg'}"${m.estornado?' style="opacity:.45"':''}>
+        <div class="dt">${dt(m.movement_date)} · ${esc(m.documento||'sem documento')}${m.numero_lote?' · lote '+esc(m.numero_lote):''}</div>
+        <div class="ds"><b>${esc(m.tipo)}</b> ${m.sinal>0?'+':'−'}${nf(m.quantidade)} ${esc(p.unidade)}
+          · ${money(m.valor_custo)}${m.cliente_nome?' <span class="mut">· '+esc(m.cliente_nome)+'</span>':''}
+          ${m.motivo?' <span class="mut">· '+esc(m.motivo)+'</span>':''}
+          ${m.status_transito==='EM_TRANSITO'?' <span class="tag t-info">em trânsito</span>':''}
+          ${m.estornado?' <span class="tag t-mut">estornado</span>':''}</div>
+      </div>`).join('')}</div>` : '<div class="empty">Sem movimentação registrada.</div>'}</div></div>`;
+
+  on('#expRx','click', () => toXlsx((rx.movimentos||[]).map(m=>({Data:m.movement_date,Tipo:m.tipo,
+    Documento:m.documento,Lote:m.numero_lote,Quantidade:Number(m.quantidade)*m.sinal,
+    ValorCusto:m.valor_custo,Cliente:m.cliente_nome,Motivo:m.motivo,
+    Estornado:m.estornado?'SIM':'NAO'})), `x-ray-${p.sku}.xlsx`));
+
+  if((rx.consumo||[]).length){
+    const eixo = { ticks:{color:'#8b98a9'}, grid:{color:'#242e3b'} };
+    new Chart($('#rxc'), { type:'bar',
+      data:{ labels: rx.consumo.map(c=>dt(c.mes).slice(3)),
+        datasets:[{ label:'Saída no mês', data: rx.consumo.map(c=>Number(c.qtd_consumida)),
+          backgroundColor:'#4a9eff' }]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+        scales:{ x:eixo, y:eixo } } });
+  }
+};
+
+/* =========================================================
+   GIRO E COBERTURA — quanto sai por período e há quanto tempo o saldo está parado
+   Resolve o problema do lote genérico: a idade vem do fluxo (FIFO), não do lote.
+   ========================================================= */
+ROUTES.giro = async () => {
+  const meses = Number(S.settings.consumo_meses || 3);
+  const { data, error } = await sb.rpc('fn_giro', { p_meses: meses });
+  if(error) return err(error);
+  const comSaldo = (data||[]).filter(r => Number(r.qtd_atual) > 0);
+
+  const cont = st => comSaldo.filter(r=>r.status===st).length;
+  const valor = st => comSaldo.filter(r=>r.status===st).reduce((a,r)=>a+Number(r.valor_atual||0),0);
+  const semRastreio = comSaldo.filter(r=>r.sem_rastreio).length;
+  const semIdade = comSaldo.filter(r=>!r.idade_confiavel).length;
+
+  const CL = { CRITICO:'t-bad', BAIXO:'t-warn', ADEQUADO:'t-ok', EXCESSO:'t-info', 'SEM GIRO':'t-mut', 'SEM DADOS':'t-mut' };
+
+  $('#view').innerHTML = header('Giro e cobertura',
+    `Quanto sai por mês de cada item, para quantos meses o saldo dá, e há quantos dias esse saldo está parado. Consumo médio dos últimos ${meses} meses.`,
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="cards">
+    <div class="card bad"><div class="lb">Crítico</div><div class="vl">${nf(cont('CRITICO'))}</div>
+      <div class="ft">menos de meio mês de cobertura</div></div>
+    <div class="card warn"><div class="lb">Baixo</div><div class="vl">${nf(cont('BAIXO'))}</div>
+      <div class="ft">${money(valor('BAIXO'))}</div></div>
+    <div class="card ok"><div class="lb">Adequado</div><div class="vl">${nf(cont('ADEQUADO'))}</div>
+      <div class="ft">${money(valor('ADEQUADO'))}</div></div>
+    <div class="card info"><div class="lb">Excesso</div><div class="vl">${nf(cont('EXCESSO'))}</div>
+      <div class="ft">${money(valor('EXCESSO'))} acima de 2 meses</div></div>
+    <div class="card"><div class="lb">Sem giro</div><div class="vl">${nf(cont('SEM GIRO'))}</div>
+      <div class="ft">${money(valor('SEM GIRO'))} sem saída no período</div></div>
+  </div>
+
+  ${semIdade ? `<div class="hint"><b>${nf(semIdade)} produto(s) com idade parcial.</b>
+    A idade é calculada alocando o saldo atual nas entradas mais recentes — quando as entradas conhecidas
+    não cobrem todo o saldo, o restante veio do Marco Zero e a idade real é maior que a exibida.
+    Isso se resolve sozinho conforme os meses de importação forem se acumulando.</div>` : ''}
+  ${semRastreio ? `<div class="hint"><b>${nf(semRastreio)} produto(s) usam só lote genérico</b> (R100, S/L).
+    Neles a idade do lote não significaria nada, porque o balde nunca zera — por isso esta tela mede a idade
+    pelo fluxo de entradas e saídas, e não pelo lote. É o número em que confiar para esses itens.</div>` : ''}
+
+  <div class="filters">
+    <div class="fld" style="min-width:250px"><label>Buscar</label><input id="q" placeholder="código ou descrição"></div>
+    <div class="fld"><label>Situação</label><select id="st"><option value="">Todas</option>
+      ${['CRITICO','BAIXO','ADEQUADO','EXCESSO','SEM GIRO'].map(x=>`<option>${x}</option>`).join('')}</select></div>
+    <div class="fld"><label>Ordenar por</label><select id="or">
+      <option value="valor">Valor em estoque</option><option value="idade">Idade do saldo</option>
+      <option value="cob">Cobertura</option><option value="cons">Consumo médio</option></select></div>
+  </div>
+
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Descrição</th><th class="num">Saldo</th><th class="num">Valor</th>
+      <th class="num">Saída/mês</th><th class="num">Saída no período</th><th class="num">Cobertura</th>
+      <th>Situação</th><th class="num">Idade do saldo</th><th class="num">Sem saída há</th></tr></thead>
+    <tbody id="tb"></tbody></table></div></div></div>`;
+
+  const draw = () => {
+    const q = $('#q').value.toLowerCase(), st = $('#st').value, or = $('#or').value;
+    let f = comSaldo.filter(r => (!q || (r.sku+' '+r.descricao).toLowerCase().includes(q)) && (!st || r.status===st));
+    const num = v => Number(v ?? -1);
+    f.sort((a,b) => or==='idade' ? num(b.idade_media_dias)-num(a.idade_media_dias)
+                  : or==='cob'   ? num(b.cobertura_meses)-num(a.cobertura_meses)
+                  : or==='cons'  ? num(b.consumo_medio)-num(a.consumo_medio)
+                  : num(b.valor_atual)-num(a.valor_atual));
+    $('#tb').innerHTML = f.length ? f.slice(0,800).map(r=>`<tr>
+      <td class="mono"><a style="cursor:pointer" onclick="location.hash='produto?id=${r.product_id}'">${esc(r.sku)}</a>${r.sem_rastreio?' <span class="tag t-mut" title="Só lote genérico">S/L</span>':''}</td>
+      <td>${esc(r.descricao)}</td>
+      <td class="num">${nf(r.qtd_atual)}</td><td class="num">${money(r.valor_atual)}</td>
+      <td class="num">${nf(r.consumo_medio)}</td><td class="num">${nf(r.saidas_periodo)}</td>
+      <td class="num">${r.cobertura_meses===null?'—':nf(r.cobertura_meses,1)+' m'}</td>
+      <td><span class="tag ${CL[r.status]||'t-mut'}">${esc(r.status)}</span></td>
+      <td class="num">${r.idade_media_dias===null?'—':nf(r.idade_media_dias,0)+' d'}${r.idade_confiavel?'':' <span class="tag t-mut" title="Entradas conhecidas não cobrem todo o saldo">parcial</span>'}</td>
+      <td class="num">${r.dias_sem_saida===null?'—':nf(r.dias_sem_saida)+' d'}</td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">Nada com esses filtros.</td></tr>';
+  };
+  draw(); ['q','st','or'].forEach(i => { on('#'+i,'input',draw); on('#'+i,'change',draw); });
+  on('#exp','click', () => toXlsx(comSaldo.map(r=>({Codigo:r.sku,Descricao:r.descricao,Saldo:r.qtd_atual,
+    Valor:r.valor_atual,ConsumoMedioMes:r.consumo_medio,SaidaNoPeriodo:r.saidas_periodo,
+    CoberturaMeses:r.cobertura_meses,Situacao:r.status,IdadeSaldoDias:r.idade_media_dias,
+    IdadeConfiavel:r.idade_confiavel?'SIM':'PARCIAL',DiasSemSaida:r.dias_sem_saida,
+    SoLoteGenerico:r.sem_rastreio?'SIM':'NAO'})), 'giro-e-cobertura.xlsx'));
+};
+
+/* =========================================================
+   INVENTÁRIO — contagem e aprovação em etapas separadas
+   ========================================================= */
+ROUTES.inventario = async () => {
+  const invId = new URLSearchParams((location.hash.split('?')[1]||'')).get('i');
+  if(invId) return telaContagem(invId);
+
+  const { data, error } = await sb.from('v_inventarios').select('*').order('created_at',{ascending:false}).limit(100);
+  if(error) return err(error);
+  const abertos = data.filter(i => ['aberto','contado','aguardando_aprovacao'].includes(i.status));
+
+  $('#view').innerHTML = header('Inventário',
+    'A contagem sozinha não altera o saldo. O ajuste só nasce na aprovação — é o que impede quem conta de fechar a própria diferença.',
+    can('admin','auditor','operacional') ? `<button class="btn" id="novo">Novo inventário</button>` : '') + `
+  ${abertos.length ? `<div class="hint">Você tem <b>${nf(abertos.length)}</b> inventário(s) em andamento.
+    O saldo esperado de cada item foi congelado no momento da abertura — contar amanhã não muda a base de comparação.</div>` : ''}
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Tipo</th><th>Corte</th><th>Situação</th>
+      <th class="num">Itens</th><th class="num">Contados</th><th class="num">Divergentes</th>
+      <th class="num">Impacto R$</th><th>Aberto por</th><th></th></tr></thead>
+    <tbody>${data.length ? data.map(i=>`<tr>
+      <td class="mono">${esc(i.codigo)}</td><td>${esc(i.tipo)}</td><td>${dts(i.data_hora_corte)}</td>
+      <td><span class="tag ${i.status==='aprovado'?'t-ok':i.status==='cancelado'?'t-mut':'t-warn'}">${esc(i.status.replace('_',' '))}</span></td>
+      <td class="num">${nf(i.itens)}</td><td class="num">${nf(i.contados)}</td>
+      <td class="num ${i.divergentes?'neg':''}">${nf(i.divergentes)}</td>
+      <td class="num ${sgn(i.impacto_valor)}">${money(i.impacto_valor)}</td>
+      <td>${esc(i.criado_por||'—')}</td>
+      <td><a style="cursor:pointer" onclick="location.hash='inventario?i=${i.id}'">${i.status==='aprovado'?'ver':'contar'}</a></td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhum inventário ainda.</td></tr>'}</tbody>
+  </table></div></div></div>`;
+
+  on('#novo','click', async () => {
+    const prods = await fetchAll(() => sb.from('v_stock_current').select('product_id,sku,descricao,qtd_atual')
+      .gt('qtd_atual',0).order('sku'));
+    const m = modal('Novo inventário', `
+      <div class="hint">O saldo esperado é <b>congelado agora</b>, no instante da abertura. Se o estoque se mover
+      enquanto você conta, a comparação continua justa — a divergência não vira ruído de horário.</div>
+      <div class="fld"><label>Tipo</label><select id="tp">
+        <option value="pontual">Pontual — alguns itens específicos</option>
+        <option value="ciclico">Cíclico — contagem rotativa</option>
+        <option value="geral">Geral — todo o estoque com saldo</option></select></div>
+      <div class="fld" id="wrapSel"><label>Produtos (deixe vazio para todos com saldo)</label>
+        <input id="busca" placeholder="filtrar por código ou descrição" style="margin-bottom:6px">
+        <select id="prods" multiple size="9" style="width:100%">
+          ${(prods||[]).map(p=>`<option value="${p.product_id}">${esc(p.sku)} — ${esc(p.descricao)} (${nf(p.qtd_atual)})</option>`).join('')}
+        </select>
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">Segure Ctrl para escolher vários.</div></div>
+      <div class="fld"><label>Observação</label><textarea id="obs" rows="2" placeholder="ex.: contagem do corredor A"></textarea></div>
+      <button class="btn" id="ok">Abrir inventário</button>`);
+    const sel = m.querySelector('#prods'), todos = [...sel.options];
+    m.querySelector('#busca').oninput = e => {
+      const q = e.target.value.toLowerCase();
+      todos.forEach(o => o.hidden = q && !o.textContent.toLowerCase().includes(q));
+    };
+    m.querySelector('#tp').onchange = e => m.querySelector('#wrapSel').style.display = e.target.value==='geral' ? 'none' : '';
+    m.querySelector('#ok').onclick = async () => {
+      const tipo = m.querySelector('#tp').value;
+      const ids = tipo==='geral' ? null : [...sel.selectedOptions].map(o=>o.value);
+      const { data:novo, error } = await sb.rpc('fn_open_inventory', {
+        p_tipo:tipo, p_observacao:m.querySelector('#obs').value||null,
+        p_products: (ids && ids.length) ? ids : null, p_lots:null });
+      if(error) return err(error);
+      m.remove(); location.hash = 'inventario?i=' + novo;
+    };
+  });
+};
+
+async function telaContagem(invId){
+  const [{data:inv}, itens] = await Promise.all([
+    sb.from('v_inventarios').select('*').eq('id',invId).maybeSingle(),
+    fetchAll(() => sb.from('v_inventario_itens').select('*').eq('inventory_id',invId).order('sku'))
+  ]);
+  if(!inv) return err(new Error('Inventário não encontrado'));
+  const fechado = ['aprovado','cancelado'].includes(inv.status);
+  const podeAprovar = can('admin','auditor') && !fechado;
+
+  $('#view').innerHTML = header(`${esc(inv.codigo)} <span class="tag ${fechado?'t-ok':'t-warn'}" style="font-size:12px;vertical-align:3px">${esc(inv.status.replace('_',' '))}</span>`,
+    `Corte em ${dts(inv.data_hora_corte)} · aberto por ${esc(inv.criado_por||'—')}${inv.aprovado_por?` · aprovado por ${esc(inv.aprovado_por)}`:''}`,
+    `<button class="btn gh sm" onclick="location.hash='inventario'">Voltar</button>
+     <button class="btn gh sm" id="exp">Exportar Excel</button>
+     ${podeAprovar?`<button class="btn gh sm dg" id="cancelar">Cancelar inventário</button>
+     <button class="btn" id="aprovar">Aprovar e gerar ajustes</button>`:''}`) + `
+  <div class="cards">
+    <div class="card"><div class="lb">Itens</div><div class="vl">${nf(inv.itens)}</div></div>
+    <div class="card"><div class="lb">Contados</div><div class="vl">${nf(inv.contados)}</div>
+      <div class="ft">${nf(inv.itens - inv.contados)} pendentes</div></div>
+    <div class="card ${inv.divergentes?'bad':'ok'}"><div class="lb">Divergentes</div><div class="vl">${nf(inv.divergentes)}</div></div>
+    <div class="card ${inv.impacto_valor<0?'bad':inv.impacto_valor>0?'warn':''}"><div class="lb">Impacto</div>
+      <div class="vl" style="font-size:19px">${money(inv.impacto_valor)}</div></div>
+  </div>
+  ${!fechado?`<div class="filters">
+    <div class="fld" style="min-width:250px"><label>Buscar</label><input id="q" placeholder="código, descrição ou lote"></div>
+    <div class="fld"><label>Mostrar</label><select id="fl">
+      <option value="">Todos</option><option value="pend">Pendentes</option>
+      <option value="div">Com divergência</option></select></div>
+    <div class="fld"><label>&nbsp;</label>
+      <label style="font-weight:400;font-size:12.5px"><input type="checkbox" id="cego" style="width:auto;margin-right:6px" checked>
+      Contagem às cegas (esconde o esperado)</label></div>
+  </div>`:''}
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th class="num">Esperado</th>
+      <th class="num" style="width:130px">Contado</th><th class="num">Divergência</th>
+      <th class="num">Impacto R$</th><th style="width:200px">Motivo</th><th>Observação</th><th></th></tr></thead>
+    <tbody id="tb"></tbody></table></div></div></div>`;
+
+  const motivos = S.reasons;
+  const draw = () => {
+    const q = ($('#q')?.value||'').toLowerCase(), fl = $('#fl')?.value||'', cego = $('#cego')?.checked;
+    const f = itens.filter(i =>
+      (!q || (i.sku+' '+i.descricao+' '+(i.numero_lote||'')).toLowerCase().includes(q)) &&
+      (fl!=='pend' || i.counted_qty===null) &&
+      (fl!=='div'  || (i.counted_qty!==null && Number(i.divergencia)!==0)));
+    $('#tb').innerHTML = f.length ? f.slice(0,600).map(i=>{
+      const contado = i.counted_qty!==null;
+      const div = contado ? Number(i.divergencia) : null;
+      const mostraEsp = !cego || contado || fechado;
+      return `<tr data-id="${i.id}">
+        <td class="mono">${esc(i.sku)}</td><td>${esc(i.descricao)}</td>
+        <td class="mono">${esc(i.numero_lote||'—')}</td>
+        <td class="num">${mostraEsp ? nf(i.expected_qty) : '<span class="mut">oculto</span>'}</td>
+        <td class="num">${fechado ? nf(i.counted_qty) : `<input type="number" step="0.0001" class="cnt"
+              value="${contado?i.counted_qty:''}" style="width:110px;text-align:right;background:var(--bg2);
+              border:1px solid var(--line);border-radius:6px;padding:5px 8px">`}</td>
+        <td class="num ${div===null?'':sgn(div)}">${div===null?'—':nf(div)}</td>
+        <td class="num ${div===null?'':sgn(div)}">${contado?money(i.impacto_valor):'—'}</td>
+        <td>${fechado ? esc(i.motivo||'—') : `<select class="rsn" style="width:190px;background:var(--bg2);
+              border:1px solid var(--line);border-radius:6px;padding:5px 8px">
+              <option value="">—</option>
+              ${motivos.map(r=>`<option value="${r.id}"${r.id===i.reason_id?' selected':''}>${esc(r.descricao)}</option>`).join('')}
+            </select>`}</td>
+        <td>${fechado ? esc(i.observacao||'') : `<input class="obs" value="${esc(i.observacao||'')}"
+              placeholder="opcional" style="width:170px;background:var(--bg2);border:1px solid var(--line);
+              border-radius:6px;padding:5px 8px">`}</td>
+        <td>${fechado?'':`<button class="btn sm gh sv">Salvar</button>
+              <button class="btn sm gh rm" title="Tirar este item do inventário">✕</button>`}</td>
+      </tr>`;}).join('') : '<tr><td colspan="10" class="empty">Nada aqui com esse filtro.</td></tr>';
+
+    if(fechado) return;
+    $('#tb').querySelectorAll('tr[data-id]').forEach(tr => {
+      const btn = tr.querySelector('.sv'); if(!btn) return;
+      const rm = tr.querySelector('.rm');
+      if(rm) rm.onclick = async () => {
+        if(!confirm('Tirar este item do inventário? Ele volta a não estar sendo contado.')) return;
+        const { error } = await sb.rpc('fn_remove_inventory_item', { p_item: tr.dataset.id });
+        if(error) return err(error);
+        const i = itens.findIndex(x=>x.id===tr.dataset.id); if(i>=0) itens.splice(i,1);
+        toast('Item removido do inventário.'); draw();
+      };
+      btn.onclick = async () => {
+        const id = tr.dataset.id;
+        const v = tr.querySelector('.cnt').value;
+        if(v==='') return toast('Informe a quantidade contada.','err');
+        btn.disabled = true;
+        const { error } = await sb.rpc('fn_count_item', {
+          p_item:id, p_counted:Number(v),
+          p_reason: tr.querySelector('.rsn').value || null,
+          p_observacao: tr.querySelector('.obs').value || null });
+        btn.disabled = false;
+        if(error) return err(error);
+        const it = itens.find(x=>x.id===id);
+        it.counted_qty = Number(v); it.divergencia = Number(v) - Number(it.expected_qty);
+        it.impacto_valor = it.divergencia * Number(it.custo_unitario);
+        it.reason_id = tr.querySelector('.rsn').value || null;
+        it.observacao = tr.querySelector('.obs').value || null;
+        toast('Contagem registrada.'); draw();
+      };
+    });
+  };
+  draw();
+  ['q','fl','cego'].forEach(id => on('#'+id, id==='q'?'input':'change', draw));
+
+  on('#exp','click', () => toXlsx(itens.map(i=>({Codigo:i.sku,Descricao:i.descricao,Lote:i.numero_lote,
+    Esperado:i.expected_qty,Contado:i.counted_qty,Divergencia:i.divergencia,
+    CustoUnit:i.custo_unitario,ImpactoRS:i.impacto_valor,Motivo:i.motivo,Observacao:i.observacao,
+    ContadoPor:i.contado_por})), `${inv.codigo}.xlsx`));
+
+  on('#cancelar','click', () => {
+    const m = modal('Cancelar inventário', `
+      <div class="hint">Cancelar não gera ajuste nenhum: o saldo fica exatamente como está.
+      O inventário continua visível no histórico, marcado como cancelado, com o motivo — é assim que
+      um engano na seleção dos itens não obriga você a fechar um ciclo que não queria abrir.</div>
+      <div class="fld"><label>Motivo do cancelamento</label>
+        <input id="mt" placeholder="ex.: selecionei os produtos errados"></div>
+      <button class="btn dg" id="ok">Cancelar inventário</button>`);
+    m.querySelector('#ok').onclick = async () => {
+      const mt = m.querySelector('#mt').value.trim();
+      if(!mt) return toast('Informe o motivo.','err');
+      const { error } = await sb.rpc('fn_cancel_inventory', { p_inventory:invId, p_motivo:mt });
+      if(error) return err(error);
+      m.remove(); toast('Inventário cancelado.'); location.hash = 'inventario';
+    };
+  });
+
+  on('#aprovar','click', () => {
+    const contados = itens.filter(i=>i.counted_qty!==null);
+    const divs = contados.filter(i=>Number(i.divergencia)!==0);
+    const semMotivo = divs.filter(i=>!i.reason_id);
+    const impacto = divs.reduce((a,i)=>a+Number(i.impacto_valor),0);
+    const m = modal('Aprovar inventário', `
+      <div class="hint">A aprovação grava os ajustes no razão. A partir daí eles não podem ser apagados —
+      só estornados, com motivo e registro em auditoria.</div>
+      <div class="cards">
+        <div class="card"><div class="lb">Itens contados</div><div class="vl">${nf(contados.length)}</div>
+          <div class="ft">${nf(itens.length-contados.length)} não contados serão ignorados</div></div>
+        <div class="card ${divs.length?'bad':'ok'}"><div class="lb">Ajustes a gerar</div><div class="vl">${nf(divs.length)}</div></div>
+        <div class="card ${impacto<0?'bad':'warn'}"><div class="lb">Impacto</div>
+          <div class="vl" style="font-size:19px">${money(impacto)}</div></div>
+      </div>
+      ${semMotivo.length?`<div class="msg err" style="display:block">${nf(semMotivo.length)} divergência(s) sem motivo.
+        Todo ajuste precisa de motivo — volte e preencha antes de aprovar.</div>`:''}
+      ${contados.length===0?`<div class="msg err" style="display:block">Nenhum item foi contado.</div>`:''}
+      <button class="btn" id="ok" ${(semMotivo.length||!contados.length)?'disabled':''}>Aprovar e gerar ajustes</button>`);
+    m.querySelector('#ok').onclick = async () => {
+      m.querySelector('#ok').disabled = true;
+      const { data, error } = await sb.rpc('fn_approve_inventory', { p_inventory:invId });
+      if(error){ err(error); m.querySelector('#ok').disabled=false; return; }
+      m.remove();
+      toast(`Inventário aprovado: ${data.ajustes_gerados} ajuste(s), impacto ${money(data.impacto_total)}.`);
+      route();
+    };
+  });
+}
+
+/* =========================================================
+   AJUSTES — quantos, de quanto e por quê
+   ========================================================= */
+ROUTES.ajustes = async () => {
+  const de = new Date(); de.setMonth(de.getMonth()-11); de.setDate(1);
+  const data = await fetchAll(() => sb.from('v_ajustes').select('*')
+    .gte('movement_date', de.toISOString().slice(0,10)).order('movement_date',{ascending:false}));
+
+  const mesAtual = new Date().toISOString().slice(0,7);
+  const doMes = data.filter(a => a.movement_date.slice(0,7) === mesAtual);
+  const pos = doMes.filter(a=>a.sinal>0), neg = doMes.filter(a=>a.sinal<0);
+  const soma = arr => arr.reduce((s,a)=>s+Number(a.valor_custo),0);
+
+  const porMotivo = {}; data.forEach(a => {
+    const k=a.motivo; porMotivo[k] = porMotivo[k] || {qtd:0, valor:0, itens:0};
+    porMotivo[k].qtd += Math.abs(Number(a.quantidade));
+    porMotivo[k].valor += Number(a.valor_custo);
+    porMotivo[k].itens++;
+  });
+  const porMes = {}; data.forEach(a => {
+    const k=a.mes; porMes[k] = porMes[k] || {qtd:0, pos:0, neg:0};
+    porMes[k].qtd++; if(a.sinal>0) porMes[k].pos += Number(a.valor_custo); else porMes[k].neg += Number(a.valor_custo);
+  });
+  const meses = Object.keys(porMes).sort();
+
+  $('#view').innerHTML = header('Ajustes de estoque',
+    'Quantos ajustes, de quanto e por quê. A tendência importa mais que o número absoluto: ajuste subindo é processo piorando.',
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="cards">
+    <div class="card"><div class="lb">Ajustes no mês</div><div class="vl">${nf(doMes.length)}</div>
+      <div class="ft">${nf(pos.length)} positivos · ${nf(neg.length)} negativos</div></div>
+    <div class="card bad"><div class="lb">Perdas no mês</div><div class="vl" style="font-size:19px">${money(soma(neg))}</div></div>
+    <div class="card warn"><div class="lb">Sobras no mês</div><div class="vl" style="font-size:19px">${money(soma(pos))}</div></div>
+    <div class="card"><div class="lb">Impacto líquido</div><div class="vl" style="font-size:19px">${money(soma(pos)-soma(neg))}</div></div>
+    <div class="card"><div class="lb">Ajustes em 12 meses</div><div class="vl">${nf(data.length)}</div></div>
+  </div>
+  ${data.length ? `
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
+    <div class="panel" style="margin:0"><div class="ph"><h3>Ajustes por mês</h3></div>
+      <div class="pb"><div class="chartbox"><canvas id="c1"></canvas></div></div></div>
+    <div class="panel" style="margin:0"><div class="ph"><h3>Valor por motivo</h3></div>
+      <div class="pb"><div class="chartbox"><canvas id="c2"></canvas></div></div></div>
+  </div>
+  <div class="panel"><div class="ph"><h3>Por motivo</h3><span class="sub">últimos 12 meses</span></div>
+    <div class="pb flush"><table>
+    <thead><tr><th>Motivo</th><th class="num">Ocorrências</th><th class="num">Quantidade</th><th class="num">Valor</th></tr></thead>
+    <tbody>${Object.entries(porMotivo).sort((a,b)=>b[1].itens-a[1].itens).map(([k,v])=>`<tr>
+      <td>${esc(k)}</td><td class="num">${nf(v.itens)}</td><td class="num">${nf(v.qtd)}</td>
+      <td class="num ${sgn(v.valor)}">${money(v.valor)}</td></tr>`).join('')}</tbody>
+    </table></div></div>` : ''}
+  <div class="panel"><div class="ph"><h3>Lançamentos</h3></div><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Data</th><th>Código</th><th>Descrição</th><th>Lote</th><th>Tipo</th>
+      <th class="num">Quantidade</th><th class="num">Valor</th><th>Motivo</th><th>Documento</th><th>Usuário</th></tr></thead>
+    <tbody>${data.length ? data.slice(0,600).map(a=>`<tr>
+      <td>${dt(a.movement_date)}</td><td class="mono">${esc(a.sku)}</td><td>${esc(a.descricao)}</td>
+      <td class="mono">${esc(a.numero_lote||'—')}</td>
+      <td><span class="tag ${a.sinal>0?'t-warn':'t-bad'}">${a.sinal>0?'positivo':'negativo'}</span></td>
+      <td class="num ${sgn(a.sinal)}">${a.sinal>0?'+':'−'}${nf(a.quantidade)}</td>
+      <td class="num ${sgn(a.sinal)}">${money(a.valor_custo)}</td>
+      <td>${esc(a.motivo)}</td><td class="mono">${esc(a.documento||'—')}</td><td>${esc(a.usuario||'—')}</td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhum ajuste registrado. Ajustes nascem da aprovação de um inventário.</td></tr>'}</tbody>
+  </table></div></div></div>`;
+
+  on('#exp','click', () => toXlsx(data.map(a=>({Data:a.movement_date,Codigo:a.sku,Descricao:a.descricao,
+    Lote:a.numero_lote,Tipo:a.sinal>0?'POSITIVO':'NEGATIVO',Quantidade:a.qtd_ajustada,
+    Valor:a.valor_ajustado,Motivo:a.motivo,Documento:a.documento,Usuario:a.usuario})), 'ajustes.xlsx'));
+
+  if(!data.length) return;
+  const eixo = { ticks:{color:'#8b98a9'}, grid:{color:'#242e3b'} };
+  new Chart($('#c1'), { type:'bar',
+    data:{ labels: meses.map(m=>dt(m).slice(3)), datasets:[
+      { label:'Sobras', data: meses.map(m=>porMes[m].pos), backgroundColor:'#d29922' },
+      { label:'Perdas', data: meses.map(m=>porMes[m].neg), backgroundColor:'#f85149' }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8b98a9'}}},
+      scales:{ x:{...eixo, stacked:true}, y:{...eixo, stacked:true} } } });
+  const mot = Object.entries(porMotivo).sort((a,b)=>Math.abs(b[1].valor)-Math.abs(a[1].valor)).slice(0,8);
+  new Chart($('#c2'), { type:'bar',
+    data:{ labels: mot.map(m=>m[0]), datasets:[{ label:'Valor R$',
+      data: mot.map(m=>Math.abs(m[1].valor)), backgroundColor:'#4a9eff' }]},
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}}, scales:{ x:eixo, y:eixo } } });
+};
+
+/* =========================================================
+   ALERTAS / ANOMALIAS
+   ========================================================= */
+ROUTES.anomalias = async () => {
+  const { data, error } = await sb.rpc('fn_anomalias');
+  if(error) return err(error);
+  const grupos = {};
+  (data||[]).forEach(a => (grupos[a.regra] = grupos[a.regra]||[]).push(a));
+  const TT = { AJUSTES_FREQUENTES:'Produtos com muitos ajustes', SALDO_NEGATIVO:'Saldo negativo',
+    TRANSITO_PENDENTE:'Transferências sem recebimento', RECEBIMENTO_DIVERGENTE:'Recebimento divergente',
+    FIFO_FURADO:'Lote antigo com produto girando', DIVERGENCIA_CRITICA:'Divergências críticas' };
+
+  $('#view').innerHTML = header('Alertas','Regras determinísticas, com o número que disparou cada uma. Nenhuma nomeia pessoas — o sistema aponta padrão, não culpado.') +
+    (Object.keys(grupos).length ? Object.entries(grupos).map(([k,v])=>`
+      <div class="panel"><div class="ph"><h3>${TT[k]||k}</h3><span class="tag ${v[0].severidade==='alta'?'t-bad':'t-warn'}">${v.length}</span></div>
+      <div class="pb">${v.slice(0,60).map(a=>`
+        <div class="alert"><div class="ic">${a.severidade==='alta'?'🔴':'🟠'}</div>
+          <div style="flex:1"><div class="tt">${esc(a.sku||'')} ${esc(a.descricao||'')}</div>
+          <div class="ms">${esc(a.mensagem)}</div></div>
+          ${a.product_id?`<a style="cursor:pointer;font-size:12.5px" onclick="location.hash='produto?id=${a.product_id}'">X-Ray</a>`:''}
+        </div>`).join('')}</div></div>`).join('')
+    : '<div class="panel"><div class="empty">Nenhum alerta ativo.</div></div>');
+};
+
+/* =========================================================
+   AUDITORIA
+   ========================================================= */
+ROUTES.auditoria = async () => {
+  const { data, error } = await sb.from('audit_logs').select('*').order('ts',{ascending:false}).limit(400);
+  if(error) return err(error);
+  $('#view').innerHTML = header('Log de auditoria','Registro permanente. Nem administrador altera ou apaga esta tabela — o banco revoga UPDATE e DELETE para todos.') + `
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Tabela</th><th>Registro</th><th>Detalhe</th></tr></thead>
+    <tbody>${(data||[]).length ? data.map(l=>`<tr>
+      <td>${dts(l.ts)}</td><td>${esc(l.user_email||'—')}</td>
+      <td><span class="tag ${/NAO_AUTORIZADO|ESTORNO/.test(l.acao)?'t-bad':'t-mut'}">${esc(l.acao)}</span></td>
+      <td>${esc(l.tabela||'—')}</td><td class="mono" style="font-size:11px">${esc((l.registro_id||'').slice(0,8))}</td>
+      <td>${esc(l.detalhe || JSON.stringify(l.dados_depois||{}).slice(0,120))}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">Sem registros ainda.</td></tr>'}</tbody>
+  </table></div></div></div>`;
+};
+
+/* =========================================================
+   CONFIGURAÇÕES
+   ========================================================= */
+ROUTES.config = async () => {
+  const [{data:st},{data:al}] = await Promise.all([
+    sb.from('system_settings').select('*').order('chave'),
+    can('admin') ? sb.from('user_allowlist').select('*').order('email') : Promise.resolve({data:[]})
+  ]);
+  const adm = can('admin');
+  $('#view').innerHTML = header('Configurações','Todos os limites do sistema são parâmetro, não código.') + `
+  <div class="panel"><div class="ph"><h3>Parâmetros</h3>${adm?'<span class="sub">clique no valor para editar</span>':''}</div>
+  <div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Chave</th><th>Descrição</th><th class="num">Valor</th></tr></thead>
+    <tbody>${(st||[]).map(s=>`<tr><td class="mono">${esc(s.chave)}</td><td>${esc(s.descricao||'')}</td>
+      <td class="num">${adm?`<input data-k="${esc(s.chave)}" value="${esc(s.valor)}" style="width:110px;text-align:right;background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:5px 8px">`:esc(s.valor)}</td>
+    </tr>`).join('')}</tbody></table></div></div></div>
+
+  ${adm?`<div class="panel"><div class="ph"><h3>Quem pode acessar</h3>
+    <span class="sub">quem não estiver aqui não enxerga nenhuma linha do sistema</span>
+    <button class="btn sm" id="addUser">Autorizar e-mail</button></div>
+  <div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Filial</th></tr></thead>
+    <tbody>${(al||[]).map(u=>`<tr><td>${esc(u.email)}</td><td>${esc(u.full_name||'—')}</td>
+      <td><span class="tag t-info">${esc(u.role)}</span></td><td>${esc(u.branch_code)}</td></tr>`).join('')}</tbody>
+  </table></div></div></div>
+
+  <div class="panel"><div class="ph"><h3>Diagnóstico</h3>
+    <span class="sub">para quando algo se comportar de forma estranha</span>
+    <button class="btn gh sm" id="copiaDiag">Copiar</button></div>
+  <div class="pb"><pre id="diagbox" style="font-size:11.5px;color:var(--tx2);white-space:pre-wrap;
+    max-height:260px;overflow:auto;margin:0;font-family:ui-monospace,monospace"></pre></div></div>
+
+  <div class="panel" style="border-color:rgba(248,81,73,.35)"><div class="ph"><h3>Recomeçar do zero</h3>
+    <span class="sub">apaga produtos, lotes, movimentos, importações e conciliações</span></div>
+  <div class="pb">
+    <div class="hint">Use quando a base tiver dados de teste ou de uma importação errada.
+    <b>Usuários, motivos, parâmetros e o log de auditoria são preservados</b> — o próprio reset fica registrado no log.</div>
+    <button class="btn dg" id="reset">Zerar dados importados</button>
+  </div></div>`:''}`;
+
+  {
+    const { data:{ session } } = await sb.auth.getSession();
+    const txt = [
+      `versão            ${VERSAO}`,
+      `origem            ${DIAG.origem}`,
+      `dentro de iframe  ${DIAG.iframe ? 'SIM  <- a sessão não sobrevive aqui' : 'não'}`,
+      `armazenamento     ${DIAG.storage ? 'ok (dentro da página)' : 'BLOQUEADO'}`,
+      `persistência      ${DIAG.aberturas > 1 ? 'ok — esta é a abertura nº ' + DIAG.aberturas
+        : 'FALHA: cada abertura começa do zero, então todo recarregamento cai no login'}`,
+      `sessão ativa      ${session ? 'sim' : 'NÃO'}`,
+      `expira em         ${session ? new Date(session.expires_at*1000).toLocaleString('pt-BR') : '—'}`,
+      `janela            ${window.innerWidth}x${window.innerHeight}`,
+      '',
+      'últimos eventos:',
+      ...DIAG.eventos.slice(-25).map(e => `  ${e.t}  ${JSON.stringify(e)}`)
+    ].join('\n');
+    const box = $('#diagbox'); if(box) box.textContent = txt;
+    on('#copiaDiag','click', () => { navigator.clipboard?.writeText(txt); toast('Diagnóstico copiado.'); });
+  }
+
+  if(adm){
+    document.querySelectorAll('[data-k]').forEach(inp => inp.onchange = async () => {
+      const { error } = await sb.from('system_settings').update({ valor:Number(inp.value) }).eq('chave',inp.dataset.k);
+      error ? err(error) : toast('Parâmetro atualizado.');
+    });
+    $('#reset').onclick = () => {
+      const m = modal('Zerar dados importados', `
+        <div class="msg err" style="display:block"><b>Serão apagados:</b> produtos, lotes, movimentações, saldos,
+        importações, fotografias do ERP, inventários e conciliações. Não há como desfazer — mas você pode reimportar do ERP.</div>
+        <div class="hint" style="margin-bottom:14px"><b>Continuam intactos:</b> parâmetros, motivos de ajuste, usuários autorizados
+        e o log de auditoria — que registra também este reset, para a base começar vazia sem perder o histórico de que foi zerada.</div>
+        <div class="fld"><label>Digite <b>APAGAR</b> para confirmar</label><input id="c" placeholder="APAGAR"></div>
+        <button class="btn dg" id="ok">Zerar agora</button>`);
+      m.querySelector('#ok').onclick = async () => {
+        const { data, error } = await sb.rpc('fn_reset_dados', { p_confirmacao:m.querySelector('#c').value.trim().toUpperCase() });
+        if(error) return err(error);
+        m.remove();
+        toast(`Base zerada: ${data.produtos} produtos, ${data.lotes} lotes e ${data.movimentos} movimentos removidos.`);
+        location.hash = 'importacao';
+      };
+    };
+    $('#addUser').onclick = () => {
+      const m = modal('Autorizar acesso', `
+        <div class="fld"><label>E-mail</label><input id="e" type="email"></div>
+        <div class="fld"><label>Nome</label><input id="n"></div>
+        <div class="fld"><label>Perfil</label><select id="r">
+          <option value="consulta">Consulta — só visualiza</option>
+          <option value="operacional">Operacional — consulta e conta inventário</option>
+          <option value="auditor">Auditor — importa, concilia e aprova ajuste</option>
+          <option value="admin">Administrador — acesso completo</option></select></div>
+        <div class="hint">A pessoa cria a própria senha na tela de login. O perfil é concedido automaticamente no primeiro acesso.</div>
+        <button class="btn" id="ok">Autorizar</button>`);
+      m.querySelector('#ok').onclick = async () => {
+        const { error } = await sb.from('user_allowlist').insert({ email:m.querySelector('#e').value.trim().toLowerCase(),
+          full_name:m.querySelector('#n').value, role:m.querySelector('#r').value, branch_code:CFG.filial });
+        if(error) return err(error);
+        m.remove(); toast('Acesso autorizado.'); route();
+      };
+    };
+  }
+};
+
+/* ---------- start ---------- */
+/* Cair para o login no meio do trabalho é o pior comportamento possível: o usuário
+   perde a tela e não sabe por quê. Antes de expulsar, tento recuperar a sessão.
+   Só se a recuperação falhar é que a tela de login aparece — e guardando onde parou. */
+let recuperando = false;
+async function tratarSessaoPerdida(){
+  log({ ev:'sessao_perdida' });
+  if(recuperando) return; recuperando = true;
+  banner('Reconectando…', 'info');
+  try{
+    let { data:{ session } } = await sb.auth.getSession();
+    if(!session){ const r = await sb.auth.refreshSession(); session = r.data?.session || null; }
+    if(session){ banner(null); recuperando = false; return true; }
+  }catch(e){ console.warn('falha ao recuperar sessão', e); }
+  banner(null); recuperando = false;
+  try{ sessionStorage.setItem('rx_volta', location.hash || '#dashboard'); }catch(e){}
+  $('#app').style.display='none'; $('#login').style.display='flex';
+  $('#lgmsg').className = 'msg err';
+  $('#lgmsg').textContent = 'Sua sessão expirou. Entre de novo — você volta para a mesma tela em que estava.';
+  return false;
+}
+sb.auth.onAuthStateChange((ev) => { log({ ev:'auth', evento:ev });
+  if(ev === 'SIGNED_OUT') tratarSessaoPerdida(); });
+
+// faixa de aviso no topo, sem tirar a tela do usuário
+function banner(msg, tipo='warn'){
+  let b = document.getElementById('rxbanner');
+  if(!msg){ if(b) b.remove(); return; }
+  if(!b){ b = el('<div id="rxbanner"></div>'); document.body.appendChild(b); }
+  const cor = tipo==='info' ? 'var(--ac)' : 'var(--warn)';
+  b.setAttribute('style', `position:fixed;top:0;left:0;right:0;z-index:300;padding:9px 16px;
+    text-align:center;font-size:12.5px;background:var(--panel2);border-bottom:1px solid ${cor};color:${cor}`);
+  b.innerHTML = msg;
+}
+
+/* Ambiente onde a sessão não sobrevive: painel de pré-visualização (iframe) ou
+   navegador sem armazenamento local. Nesses casos o login some a cada navegação e
+   parece "bug do sistema" — melhor dizer na cara o que está acontecendo. */
+const DIAG = { eventos: [] };
+try { DIAG.eventos = JSON.parse(sessionStorage.getItem('rx_diag') || '[]'); } catch(e){}
+const log = (o) => {
+  DIAG.eventos.push({ t: new Date().toLocaleTimeString('pt-BR'), ...o });
+  if(DIAG.eventos.length > 80) DIAG.eventos.shift();
+  try { sessionStorage.setItem('rx_diag', JSON.stringify(DIAG.eventos)); } catch(e){}
+};
+// se a página recarregar, isto aparece no histórico e explica a volta ao login
+window.addEventListener('beforeunload', () => log({ ev:'PAGINA_RECARREGOU_OU_FECHOU', tela: location.hash }));
+/* Teste real de persistência: no file:// o Chrome costuma isolar o armazenamento a cada
+   abertura. O gravar/ler dentro da mesma página funciona, mas nada sobrevive ao reload —
+   e aí toda navegação que recarregue a página cai no login. Este contador prova. */
+DIAG.aberturas = (() => {
+  try { const n = Number(localStorage.getItem('rx_aberturas') || 0) + 1;
+        localStorage.setItem('rx_aberturas', n); return n; } catch(e){ return 0; }
+})();
+DIAG.iframe = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
+DIAG.storage = (() => { try { localStorage.setItem('rx_t','1'); localStorage.removeItem('rx_t'); return true; }
+                        catch(e){ return false; } })();
+DIAG.origem = location.protocol + '//' + (location.host || '(arquivo local)');
+log({ ev:'inicio', iframe:DIAG.iframe, storage:DIAG.storage, origem:DIAG.origem });
+
+if(DIAG.iframe || !DIAG.storage){
+  setTimeout(() => banner(
+    `⚠ <b>Este sistema está rodando dentro de uma janela de pré-visualização</b>, e aí o navegador não guarda a sessão —
+     a cada clique você volta para o login. <b>Salve o arquivo no computador e abra com duplo clique</b>
+     (Chrome ou Edge). Não é defeito do sistema.`), 400);
+}
+
+/* Dois arquivos do sistema abertos ao mesmo tempo compartilham a mesma sessão e brigam
+   pela renovação do token — o que derruba os dois. Aviso em vez de deixar acontecer calado. */
+try{
+  const ch = new BroadcastChannel('raiox-estoque');
+  const meuId = Math.random().toString(36).slice(2);
+  ch.onmessage = e => {
+    if(e.data?.tipo === 'ola' && e.data.id !== meuId){
+      banner('⚠ O sistema está aberto em <b>mais de uma aba ou arquivo</b>. Isso derruba a sessão das duas. Feche as outras e recarregue esta.');
+      ch.postMessage({ tipo:'ja-estou-aqui', id: meuId });
+    }
+    if(e.data?.tipo === 'ja-estou-aqui' && e.data.id !== meuId){
+      banner('⚠ O sistema já está aberto em outra aba ou arquivo. Feche a outra e recarregue esta — sessões concorrentes se derrubam.');
+    }
+  };
+  ch.postMessage({ tipo:'ola', id: meuId });
+}catch(e){ /* navegador sem BroadcastChannel: segue sem o aviso */ }
+
+// erro não tratado vira mensagem na tela, nunca silêncio
+window.addEventListener('error', e => {
+  console.error(e.error||e.message);
+  toast('Erro na tela: ' + (e.message||'desconhecido'), 'err');
+});
+window.addEventListener('unhandledrejection', e => {
+  const m = e.reason?.message || String(e.reason||'');
+  console.error(e.reason);
+  if(/JWT|token|session/i.test(m)) return tratarSessaoPerdida();
+  toast('Falha: ' + m, 'err');
+});
+boot().catch(err);
+</script>
+</body>
+</html>
