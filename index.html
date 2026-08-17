@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.6</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.7</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v3.6';
+const VERSAO = 'v3.7';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -561,7 +561,7 @@ ROUTES.lotes = async () => {
   <div class="panel"><div class="pb flush"><div class="scroll"><table>
     <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th>Arm.</th><th>Entrada</th>
       <th class="num">Dias</th><th>Faixa</th><th class="num">Saldo</th><th class="num">Valor parado</th>
-      <th class="num">Sem movto</th><th>Últ. inventário</th></tr></thead>
+      <th class="num">Sem movto</th><th>Últ. inventário</th><th>Origem</th><th></th></tr></thead>
     <tbody id="tb"></tbody></table></div></div></div>`;
 
   const draw = () => {
@@ -578,12 +578,74 @@ ROUTES.lotes = async () => {
       <td><span class="tag ${cls(r.dias_em_estoque)}">${faixa(r.dias_em_estoque)}</span></td>
       <td class="num">${nf(r.qtd_atual)}</td><td class="num">${money(r.valor_atual)}</td>
       <td class="num">${nf(r.dias_sem_movimento)}</td><td>${dt(r.data_ultimo_inventario)}</td>
-    </tr>`).join('') : '<tr><td colspan="11" class="empty">Nenhum lote encontrado.</td></tr>';
+      <td>${r.lote_pai ? `<span class="tag t-info" title="Fracionado de ${esc(r.lote_pai)} em ${dt(r.fracionado_em)}">de ${esc(r.lote_pai)}</span>`
+            : r.lotes_filhos > 0 ? `<span class="tag t-mut">${nf(r.lotes_filhos)} fracionamento(s)</span>` : ''}</td>
+      <td>${(can('admin','auditor') && Number(r.qtd_atual) > 0)
+            ? `<button class="btn sm gh" onclick="desmontar('${r.lot_id}','${esc(r.sku)}','${esc(r.numero_lote)}',${r.qtd_atual},'${esc(r.unidade||'')}')">Desmontar</button>`
+            : ''}</td>
+    </tr>`).join('') : '<tr><td colspan="13" class="empty">Nenhum lote encontrado.</td></tr>';
   };
   draw(); ['q','dmin','tp'].forEach(i => { $('#'+i).oninput = draw; $('#'+i).onchange = draw; });
   $('#exp').onclick = () => toXlsx(data.map(r=>({Codigo:r.sku,Descricao:r.descricao,Lote:r.numero_lote,Armazem:r.armazem,
     Entrada:r.data_entrada,DiasEmEstoque:r.dias_em_estoque,Saldo:r.qtd_atual,Valor:r.valor_atual,
-    DiasSemMovimento:r.dias_sem_movimento,UltimoInventario:r.data_ultimo_inventario})), 'lotes-idade.xlsx');
+    DiasSemMovimento:r.dias_sem_movimento,UltimoInventario:r.data_ultimo_inventario,
+    FracionadoDe:r.lote_pai,FracionadoEm:r.fracionado_em,Fracionamentos:r.lotes_filhos})), 'lotes-idade.xlsx');
+};
+
+/* Desmontagem de lote: ao fracionar uma bobina, a parte cortada vira um lote
+   com número próprio para não se misturar de volta ao original. O saldo do
+   produto não muda — é transferência interna, com dois movimentos no Kardex. */
+window.desmontar = (lotId, sku, numeroLote, saldo, unidade) => {
+  const m = modal(`Desmontar lote — ${sku}`, `
+    <div class="hint">A parte fracionada vira um <b>lote novo</b>, com número próprio, e não volta a se juntar
+    ao original. O saldo do produto continua o mesmo: sai do lote de origem e entra no lote fracionado.
+    <br><b>A idade é herdada:</b> o lote novo mantém a data de entrada do original — cortar não rejuvenesce o material.</div>
+
+    <dl class="kv" style="margin-bottom:18px">
+      <dt>Produto</dt><dd class="mono">${esc(sku)}</dd>
+      <dt>Lote de origem</dt><dd class="mono">${esc(numeroLote)}</dd>
+      <dt>Saldo disponível</dt><dd>${nf(saldo)} ${esc(unidade)}</dd></dl>
+
+    <div class="filters">
+      <div class="fld"><label>Quantidade a fracionar</label>
+        <input id="dmQtd" type="number" step="0.0001" max="${saldo}" placeholder="0"></div>
+      <div class="fld" style="flex:1;min-width:200px"><label>Número do lote novo</label>
+        <input id="dmLote" placeholder="deixe vazio para gerar automático"></div>
+    </div>
+    <div class="fld"><label>Motivo</label>
+      <input id="dmMotivo" value="Fracionamento para atendimento de pedido"></div>
+    <div class="fld"><label>Observação</label><textarea id="dmObs" rows="2" placeholder="opcional"></textarea></div>
+    <div id="dmPrev" style="margin:12px 0;font-size:13px"></div>
+    <button class="btn" id="dmOk">Desmontar lote</button>`);
+
+  const prev = () => {
+    const q = Number(m.querySelector('#dmQtd').value||0);
+    const box = m.querySelector('#dmPrev');
+    if(!(q > 0)) return box.innerHTML = '';
+    if(q >= saldo) return box.innerHTML =
+      `<span class="tag t-bad">quantidade precisa ser menor que ${nf(saldo)}</span>
+       <div class="mut" style="margin-top:4px;font-size:12px">Fracionar o saldo inteiro apenas renomearia o lote.</div>`;
+    box.innerHTML = `<span class="tag t-mut">${esc(numeroLote)}: ${nf(saldo)} → ${nf(saldo - q)}</span>
+      &nbsp;<span class="tag t-ok">lote novo: ${nf(q)} ${esc(unidade)}</span>`;
+  };
+  m.querySelector('#dmQtd').oninput = prev;
+
+  m.querySelector('#dmOk').onclick = async () => {
+    const q = Number(m.querySelector('#dmQtd').value||0);
+    if(!(q > 0)) return toast('Informe a quantidade a fracionar.', 'err');
+    if(q >= saldo) return toast(`A quantidade precisa ser menor que o saldo (${nf(saldo)}).`, 'err');
+    m.querySelector('#dmOk').disabled = true;
+    const { data, error } = await sb.rpc('fn_desmontar_lote', {
+      p_lot: lotId, p_quantidade: q,
+      p_novo_lote: m.querySelector('#dmLote').value || null,
+      p_motivo: m.querySelector('#dmMotivo').value || null,
+      p_observacao: m.querySelector('#dmObs').value || null });
+    m.querySelector('#dmOk').disabled = false;
+    if(error) return err(error);
+    m.remove();
+    toast(`Lote ${data.lote_novo} criado com ${nf(data.quantidade)} ${unidade}. Restam ${nf(data.saldo_restante)} no ${numeroLote}.`);
+    route();
+  };
 };
 
 /* =========================================================
@@ -1607,7 +1669,7 @@ ROUTES.produto = async () => {
       <th class="num">Valor</th><th>Últ. inventário</th></tr></thead>
     <tbody>${(rx.lotes||[]).length ? rx.lotes.map(l=>`<tr>
       <td class="mono">${esc(l.numero_lote)}${l.lote_generico?' <span class="tag t-mut">genérico</span>':''}</td>
-      <td>${esc(l.armazem)}</td><td>${dt(l.data_entrada)}${l.idade_estimada?' <span class="tag t-info">MZ</span>':''}</td>
+      <td>${esc(l.armazem)}</td><td>${dt(l.data_entrada)}${l.idade_estimada?' <span class="tag t-info">MZ</span>':''}${l.lote_pai?` <span class="tag t-mut">de ${esc(l.lote_pai)}</span>`:''}</td>
       <td class="num">${nf(l.dias_em_estoque)}</td><td class="num">${nf(l.qtd_atual)}</td>
       <td class="num">${money(l.valor_atual)}</td><td>${dt(l.data_ultimo_inventario)}</td>
     </tr>`).join('') : '<tr><td colspan="7" class="empty">Sem saldo em lote.</td></tr>'}</tbody></table></div></div></div>
