@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.9</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.0</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v3.9';
+const VERSAO = 'v4.0';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -1263,6 +1263,7 @@ async function renderPreview(file, abas){
   const knownSet = new Set((known||[]).map(p=>p.sku));
   const pares = new Set(S.tesCfop.map(t=>`${t.tes}|${t.cfop}`));
   const { data:mz } = await sb.from('erp_snapshots').select('codigo,data_referencia').eq('marco_zero',true).maybeSingle();
+  window.__mzRef = mz?.data_referencia || null;
 
   let html = '';
   for(const a of validas){
@@ -1331,12 +1332,27 @@ async function renderPreview(file, abas){
           é <b>anterior ao Marco Zero</b> e portanto não existe no razão.
         </div>`:''}
         ${antesMZ?`<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
-          <b>Atenção — risco de contagem em dobro.</b> ${nf(antesMZ)} linha(s) têm data igual ou anterior ao Marco Zero
-          (${esc(mz.codigo)}, ${dt(mz.data_referencia)}). O saldo daquela fotografia já embutia essas movimentações.
-          Importe apenas movimentos <b>posteriores</b> a ${dt(mz.data_referencia)}, ou refaça o Marco Zero com a data anterior ao período.</div>`:''}
+          <b>${nf(antesMZ)} linha(s) com data anterior ao Marco Zero</b> (${esc(mz.codigo)}, ${dt(mz.data_referencia)}).
+          <div style="margin-top:6px;font-weight:400">
+            <b>Se for saída:</b> risco de contagem em dobro — aquele saldo já embutia a baixa.<br>
+            <b>Se for entrada em trânsito</b> (nota emitida antes e recebida agora): está correto importar,
+            porque o material não estava na fotografia. Nesse caso, vale registrar na data de recebimento
+            para o Kardex não mostrar a chegada antes do Marco Zero.</div>
+          <label style="display:block;margin-top:8px;font-weight:400;color:var(--tx)">
+            <input type="checkbox" id="dr_mz_${esc(a.name)}" style="width:auto;margin-right:7px">
+            Registrar essas linhas na data de recebimento:
+            <input type="date" id="dr_dt_${esc(a.name)}" value="${new Date().toISOString().slice(0,10)}"
+                   style="width:150px;padding:4px 8px;margin-left:6px"></label>
+        </div>`:''}
         ${semProd.length?`<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
-          ${semProd.length} produto(s) sem cadastro serão recusados: ${esc(semProd.slice(0,8).join(', '))}${semProd.length>8?'…':''}.
-          Importe o Estoque Atual primeiro para criar o cadastro.</div>`:''}
+          <b>${semProd.length} produto(s) fora do cadastro:</b> ${esc(semProd.slice(0,8).join(', '))}${semProd.length>8?'…':''}.
+          <label style="display:block;margin-top:8px;font-weight:400;color:var(--tx)">
+            <input type="checkbox" id="cp_${esc(a.name)}" style="width:auto;margin-right:7px" checked>
+            Criar automaticamente e importar assim mesmo</label>
+          <div style="font-size:11.5px;margin-top:4px;color:var(--tx3)">Serve para o item que só passa pela filial —
+            entra para sair e não fica em estoque. Ele nasce sem custo e marcado como <b>auto_importado</b>,
+            para você poder revisar depois o que entrou por essa porta. Se desmarcar, essas linhas são recusadas.</div>
+        </div>`:''}
         ${a.tipo==='saldo_erp'?`<div class="filters" style="margin-bottom:4px">
           <div class="fld"><label>Data de referência do saldo</label>
             <input type="date" id="dr_${esc(a.name)}" value="${new Date().toISOString().slice(0,10)}"></div></div>
@@ -1371,6 +1387,7 @@ async function renderPreview(file, abas){
 }
 
 async function runImport(file, aba, btn){
+  const mzRef = window.__mzRef || null;
   btn.disabled = true; btn.textContent = 'Importando…';
   $('#s3').className='step on';
   try{
@@ -1403,11 +1420,21 @@ async function runImport(file, aba, btn){
         const transito = !!$(`#tr_${CSS.escape(aba.name)}`)?.checked;
         // devolução de venda pré-Marco Zero não pode abater consumo: a saída nunca foi contada
         const semConsumo = tipoDecl==='DEVOLUCAO' && !!$(`#cc_${CSS.escape(aba.name)}`)?.checked;
-        res = await sb.rpc('fn_import_movements', { p_batch:batch.id, p_rows:chunk,
+        const criarProd = !!$(`#cp_${CSS.escape(aba.name)}`)?.checked;
+        // linhas anteriores ao Marco Zero podem ser registradas na data de recebimento
+        const usarReceb = !!$(`#dr_mz_${CSS.escape(aba.name)}`)?.checked;
+        const dataReceb = $(`#dr_dt_${CSS.escape(aba.name)}`)?.value;
+        const linhas = (usarReceb && dataReceb && mzRef)
+          ? chunk.map(l => (l.data && l.data <= mzRef) ? { ...l, data: dataReceb } : l)
+          : chunk;
+        res = await sb.rpc('fn_import_movements', { p_batch:batch.id, p_rows:linhas,
           p_tipo:tipoDecl, p_em_transito:transito,
-          p_conta_consumo: semConsumo ? false : null });
+          p_conta_consumo: semConsumo ? false : null,
+          p_criar_produto: criarProd });
         if(res.error) throw res.error;
         acc.inseridos += res.data.inseridos||0; acc.duplicados += res.data.duplicados||0; acc.erros += res.data.erros||0;
+        acc.criados = (acc.criados||0) + (res.data.produtos_criados||0);
+        (res.data.skus_criados||[]).forEach(sk => (acc.skus = acc.skus||[]).push(sk));
         (res.data.detalhe_erros||[]).forEach(d => acc.detalhe.length<20 && acc.detalhe.push(d));
       }
     }
@@ -1420,7 +1447,12 @@ async function runImport(file, aba, btn){
         <div class="card ok"><div class="lb">Gravados</div><div class="vl">${nf(acc.inseridos)}</div></div>
         <div class="card"><div class="lb">Já existiam</div><div class="vl">${nf(acc.duplicados)}</div><div class="ft">ignorados pela idempotência</div></div>
         <div class="card ${acc.erros?'bad':''}"><div class="lb">Recusados</div><div class="vl">${nf(acc.erros)}</div></div>
+        ${acc.criados?`<div class="card info"><div class="lb">Produtos criados</div><div class="vl">${nf(acc.criados)}</div>
+          <div class="ft">${esc((acc.skus||[]).slice(0,4).join(', '))}${(acc.skus||[]).length>4?'…':''}</div></div>`:''}
       </div>
+      ${acc.criados?`<div class="hint">Os produtos criados nasceram <b>sem custo</b> e marcados como
+        <b>auto_importado</b>. Se algum deles for ficar em estoque de verdade, importe o Estoque Atual
+        para trazer descrição, unidade e custo corretos.</div>`:''}
       ${acc.detalhe.length?`<div class="panel" style="margin-top:8px"><div class="ph"><h3>Linhas recusadas</h3></div>
         <div class="pb flush"><div class="scroll" style="max-height:280px"><table><thead><tr><th>Linha</th><th>Motivo</th></tr></thead>
         <tbody>${acc.detalhe.map(d=>`<tr><td>${esc(d.linha)}</td><td>${esc(d.erro)}</td></tr>`).join('')}</tbody></table></div></div></div>`:''}
