@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.3</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.4</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v3.3';
+const VERSAO = 'v3.4';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -575,7 +575,8 @@ ROUTES.lotes = async () => {
    ========================================================= */
 ROUTES.movimentos = async () => {
   $('#view').innerHTML = header('Movimentações','Livro-razão do estoque. Nada aqui é apagado — estornos ficam visíveis com a tarja.',
-    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+    `${can('admin','auditor')?`<button class="btn" id="manual">Lançar manualmente</button>`:''}
+     <button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
   <div class="filters">
     <div class="fld" style="min-width:240px"><label>Produto / documento</label><input id="q" placeholder="código, descrição ou NF"></div>
     <div class="fld"><label>Tipo</label><select id="tp"><option value="">Todos</option>
@@ -636,12 +637,133 @@ ROUTES.movimentos = async () => {
     </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhuma movimentação. Comece pela Importação.</td></tr>';
   };
   $('#go').onclick = load;
+  on('#manual','click', lancamentoManual);
   $('#exp').onclick = () => toXlsx(rows.map(r=>({Data:r.movement_date,Tipo:r.tipo,Documento:r.documento,
     Produto:r.products?.sku,Descricao:r.products?.descricao,Lote:r.lots?.numero_lote,
     Quantidade:Number(r.quantidade)*r.sinal,ValorCusto:r.valor_custo,Cliente:r.cliente_nome,
     Estornado:r.voided_at?'SIM':'NAO'})), 'movimentacoes.xlsx');
   load();
 };
+
+/* Lançamento manual: para o movimento que não veio de arquivo nem tem saída no
+   sistema para vincular — o caso típico é a devolução de uma venda faturada
+   antes do Marco Zero, que por definição não existe no razão. */
+async function lancamentoManual(){
+  const prods = await fetchAll(() => sb.from('products').select('id,sku,descricao,unidade').order('sku'));
+  const { data:mz } = await sb.from('erp_snapshots').select('data_referencia').eq('marco_zero',true).maybeSingle();
+
+  const m = modal('Lançar movimento manualmente', `
+    <div class="hint">Use quando não existir arquivo nem saída no sistema para vincular — por exemplo,
+    a <b>devolução de uma venda faturada antes do Marco Zero</b>${mz?` (${dt(mz.data_referencia)})`:''}.
+    Todo lançamento manual fica marcado como tal e registrado na auditoria com seu usuário.</div>
+
+    <div class="filters">
+      <div class="fld"><label>Tipo</label><select id="lmTipo">
+        <option value="DEVOLUCAO">Devolução — soma ao estoque</option>
+        <option value="ENTRADA">Entrada — soma ao estoque</option>
+        <option value="SAIDA">Saída — baixa do estoque</option></select></div>
+      <div class="fld"><label>Data</label><input id="lmData" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="fld" style="flex:1;min-width:170px"><label>Nota fiscal / documento</label>
+        <input id="lmDoc" placeholder="número da NF"></div>
+    </div>
+
+    <div class="fld"><label>Produto</label>
+      <input id="lmProd" list="lmLista" autocomplete="off" placeholder="digite o código ou parte da descrição">
+      <datalist id="lmLista">${prods.map(p=>`<option value="${esc(p.sku)}">${esc(p.descricao)}</option>`).join('')}</datalist>
+      <div id="lmInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
+
+    <div class="filters">
+      <div class="fld" style="flex:1;min-width:200px"><label>Lote</label>
+        <select id="lmLote"><option value="">— escolha o produto primeiro —</option></select>
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">Se o lote não estiver na lista, escolha
+          "outro lote" e digite o número.</div></div>
+      <div class="fld" id="lmWrapNovo" style="display:none;min-width:180px"><label>Número do lote</label>
+        <input id="lmLoteNovo" placeholder="ex.: 263021344"></div>
+      <div class="fld"><label>Quantidade</label><input id="lmQtd" type="number" step="0.0001" placeholder="0"></div>
+    </div>
+
+    <div class="fld"><label>Cliente / origem</label><input id="lmCli" placeholder="opcional"></div>
+    <div class="fld"><label>Observação</label><textarea id="lmObs" rows="2" placeholder="opcional, mas ajuda na auditoria"></textarea></div>
+
+    <div class="fld" id="lmWrapCc"><label style="font-weight:400">
+      <input type="checkbox" id="lmCc" style="width:auto;margin-right:7px" checked>
+      Venda original anterior ao Marco Zero — <b>não abater do consumo</b></label>
+      <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">A saída nunca foi contada pelo sistema.
+        Se a devolução abatesse o consumo, o consumo médio ficaria menor que a realidade e a cobertura, maior.</div></div>
+
+    <div id="lmPrev" style="margin:12px 0;font-size:13px"></div>
+    <button class="btn" id="lmOk">Lançar movimento</button>`);
+
+  const $$ = sel => m.querySelector(sel);
+  let produto = null;
+
+  const acharProd = txt => {
+    const t = (txt||'').trim().toLowerCase(); if(!t) return null;
+    return prods.find(p => p.sku.toLowerCase() === t)
+        || prods.find(p => p.sku.toLowerCase().startsWith(t))
+        || prods.find(p => (p.sku+' '+p.descricao).toLowerCase().includes(t)) || null;
+  };
+
+  const carregarLotes = async () => {
+    const sel = $$('#lmLote');
+    if(!produto){ sel.innerHTML = '<option value="">— escolha o produto primeiro —</option>'; return; }
+    const { data } = await sb.from('v_lots_live').select('numero_lote,qtd_atual,armazem')
+      .eq('product_id', produto.id).order('numero_lote');
+    sel.innerHTML = (data||[]).map(l =>
+      `<option value="${esc(l.numero_lote)}">${esc(l.numero_lote)} — saldo ${nf(l.qtd_atual)}</option>`).join('')
+      + '<option value="__novo__">outro lote (digitar)</option>';
+    sel.onchange();
+  };
+
+  $$('#lmProd').oninput = () => {
+    produto = acharProd($$('#lmProd').value);
+    $$('#lmInfo').innerHTML = produto
+      ? `<span class="pos">✔</span> ${esc(produto.sku)} — ${esc(produto.descricao)} (${esc(produto.unidade)})`
+      : ($$('#lmProd').value.trim() ? '<span class="neg">nenhum produto encontrado</span>' : '');
+    previa();
+  };
+  $$('#lmProd').onchange = async () => { $$('#lmProd').oninput(); await carregarLotes(); };
+  $$('#lmLote').onchange = () => {
+    $$('#lmWrapNovo').style.display = $$('#lmLote').value === '__novo__' ? '' : 'none';
+  };
+  $$('#lmTipo').onchange = () => {
+    $$('#lmWrapCc').style.display = $$('#lmTipo').value === 'DEVOLUCAO' ? '' : 'none';
+    previa();
+  };
+
+  const previa = () => {
+    const q = Number($$('#lmQtd').value||0), t = $$('#lmTipo').value;
+    $$('#lmPrev').innerHTML = (produto && q > 0)
+      ? `<span class="tag ${t==='SAIDA'?'t-bad':'t-ok'}">${t==='SAIDA'?'−':'+'}${nf(q)} ${esc(produto.unidade)}</span>
+         <span class="mut"> no saldo de ${esc(produto.sku)}</span>` : '';
+  };
+  $$('#lmQtd').oninput = previa;
+
+  $$('#lmOk').onclick = async () => {
+    if(!produto) return toast('Escolha um produto válido.', 'err');
+    const q = Number($$('#lmQtd').value||0);
+    if(!(q > 0)) return toast('Informe a quantidade.', 'err');
+    const loteSel = $$('#lmLote').value;
+    const lote = loteSel === '__novo__' ? ($$('#lmLoteNovo').value||'').trim() : loteSel;
+    if(!lote) return toast('Informe o lote.', 'err');
+
+    const tipo = $$('#lmTipo').value;
+    $$('#lmOk').disabled = true;
+    const { data, error } = await sb.rpc('fn_lancar_movimento', {
+      p_product: produto.id, p_tipo: tipo, p_quantidade: q,
+      p_data: $$('#lmData').value, p_numero_lote: lote, p_armazem: '2',
+      p_documento: $$('#lmDoc').value || null, p_cliente: $$('#lmCli').value || null,
+      p_observacao: $$('#lmObs').value || null,
+      p_conta_consumo: (tipo === 'DEVOLUCAO' && $$('#lmCc').checked) ? false : null });
+
+    $$('#lmOk').disabled = false;
+    if(error) return err(error);
+    if(!data.ok) return toast(data.erro, 'err');
+    m.remove();
+    toast(`Lançado: ${tipo==='SAIDA'?'−':'+'}${nf(q)} em ${produto.sku} (${money(data.valor)}).`);
+    route();
+  };
+}
 
 window.reverter = (id, acao, sku, qtdMax, docOriginal) => {
   const ehDev = acao === 'DEVOLUCAO';
@@ -1058,15 +1180,20 @@ async function renderPreview(file, abas){
             <select id="tp_${esc(a.name)}">
               <option value="SAIDA"${a.tipo==='saidas'?' selected':''}>Saída — baixa do estoque</option>
               <option value="ENTRADA"${a.tipo==='entradas'?' selected':''}>Entrada — soma ao estoque</option>
+              <option value="DEVOLUCAO">Devolução — retorno de venda (soma ao estoque)</option>
             </select></div>
           <div class="fld" id="wrap_tr_${esc(a.name)}" style="min-width:300px"><label>&nbsp;</label>
             <label style="font-weight:400"><input type="checkbox" id="tr_${esc(a.name)}" style="width:auto;margin-right:7px">
             Ainda não conferido fisicamente (entra em trânsito)</label></div>
+          <div class="fld" id="wrap_cc_${esc(a.name)}" style="min-width:330px;display:none"><label>&nbsp;</label>
+            <label style="font-weight:400"><input type="checkbox" id="cc_${esc(a.name)}" style="width:auto;margin-right:7px" checked>
+            Venda original anterior ao Marco Zero (não abater do consumo)</label></div>
         </div>
         <div style="font-size:11.5px;color:var(--tx3);margin-bottom:12px">
           O sistema sugeriu pelo nome da aba. Se estiver errado, troque aqui — é isto que define se o movimento soma ou subtrai.
-          Devolução e cancelamento não se importam por arquivo: são feitos com um clique na tela de Movimentações,
-          sobre a saída que os originou, para o vínculo entre as duas notas não se perder.
+          Devolução de venda que <b>ainda está no sistema</b> continua sendo melhor pela tela de Movimentações, com um clique
+          sobre a saída original — o vínculo entre as duas notas fica registrado. Use a importação de devolução quando a venda
+          é <b>anterior ao Marco Zero</b> e portanto não existe no razão.
         </div>`:''}
         ${antesMZ?`<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
           <b>Atenção — risco de contagem em dobro.</b> ${nf(antesMZ)} linha(s) têm data igual ou anterior ao Marco Zero
@@ -1095,6 +1222,16 @@ async function renderPreview(file, abas){
   validas.forEach(a => {
     const b = $(`[data-go="${CSS.escape(a.name)}"]`); if(!b) return;
     b.onclick = () => runImport(file, a, b);
+    const sel = $(`#tp_${CSS.escape(a.name)}`);
+    if(sel){
+      const sincroniza = () => {
+        const wrapCc = $(`#wrap_cc_${CSS.escape(a.name)}`);
+        const wrapTr = $(`#wrap_tr_${CSS.escape(a.name)}`);
+        if(wrapCc) wrapCc.style.display = sel.value==='DEVOLUCAO' ? '' : 'none';
+        if(wrapTr) wrapTr.style.display = sel.value==='ENTRADA' ? '' : 'none';
+      };
+      sel.onchange = sincroniza; sincroniza();
+    }
   });
 }
 
@@ -1129,8 +1266,11 @@ async function runImport(file, aba, btn){
       }else{
         const tipoDecl = $(`#tp_${CSS.escape(aba.name)}`)?.value || (aba.tipo==='entradas'?'ENTRADA':'SAIDA');
         const transito = !!$(`#tr_${CSS.escape(aba.name)}`)?.checked;
+        // devolução de venda pré-Marco Zero não pode abater consumo: a saída nunca foi contada
+        const semConsumo = tipoDecl==='DEVOLUCAO' && !!$(`#cc_${CSS.escape(aba.name)}`)?.checked;
         res = await sb.rpc('fn_import_movements', { p_batch:batch.id, p_rows:chunk,
-          p_tipo:tipoDecl, p_em_transito:transito });
+          p_tipo:tipoDecl, p_em_transito:transito,
+          p_conta_consumo: semConsumo ? false : null });
         if(res.error) throw res.error;
         acc.inseridos += res.data.inseridos||0; acc.duplicados += res.data.duplicados||0; acc.erros += res.data.erros||0;
         (res.data.detalhe_erros||[]).forEach(d => acc.detalhe.length<20 && acc.detalhe.push(d));
