@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.2</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.3</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v3.2';
+const VERSAO = 'v3.3';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -1603,7 +1603,7 @@ ROUTES.inventario = async () => {
   const abertos = data.filter(i => ['aberto','contado','aguardando_aprovacao'].includes(i.status));
 
   $('#view').innerHTML = header('Inventário',
-    'A contagem sozinha não altera o saldo. O ajuste só nasce na aprovação — é o que impede quem conta de fechar a própria diferença.',
+    'A contagem é <b>por lote</b>: cada lote é uma linha independente. A contagem sozinha não altera o saldo — o ajuste só nasce na aprovação, e é isso que impede quem conta de fechar a própria diferença.',
     can('admin','auditor','operacional') ? `<button class="btn" id="novo">Novo inventário</button>` : '') + `
   ${abertos.length ? `<div class="hint">Você tem <b>${nf(abertos.length)}</b> inventário(s) em andamento.
     O saldo esperado de cada item foi congelado no momento da abertura — contar amanhã não muda a base de comparação.</div>` : ''}
@@ -1623,40 +1623,128 @@ ROUTES.inventario = async () => {
   </table></div></div></div>`;
 
   on('#novo','click', async () => {
-    const prods = await fetchAll(() => sb.from('v_stock_current').select('product_id,sku,descricao,qtd_atual')
-      .gt('qtd_atual',0).order('sku'));
-    const m = modal('Novo inventário', `
-      <div class="hint">O saldo esperado é <b>congelado agora</b>, no instante da abertura. Se o estoque se mover
-      enquanto você conta, a comparação continua justa — a divergência não vira ruído de horário.</div>
-      <div class="fld"><label>Tipo</label><select id="tp">
-        <option value="pontual">Pontual — alguns itens específicos</option>
-        <option value="ciclico">Cíclico — contagem rotativa</option>
-        <option value="geral">Geral — todo o estoque com saldo</option></select></div>
-      <div class="fld" id="wrapSel"><label>Produtos (deixe vazio para todos com saldo)</label>
-        <input id="busca" placeholder="filtrar por código ou descrição" style="margin-bottom:6px">
-        <select id="prods" multiple size="9" style="width:100%">
-          ${(prods||[]).map(p=>`<option value="${p.product_id}">${esc(p.sku)} — ${esc(p.descricao)} (${nf(p.qtd_atual)})</option>`).join('')}
-        </select>
-        <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">Segure Ctrl para escolher vários.</div></div>
-      <div class="fld"><label>Observação</label><textarea id="obs" rows="2" placeholder="ex.: contagem do corredor A"></textarea></div>
-      <button class="btn" id="ok">Abrir inventário</button>`);
-    const sel = m.querySelector('#prods'), todos = [...sel.options];
-    m.querySelector('#busca').oninput = e => {
-      const q = e.target.value.toLowerCase();
-      todos.forEach(o => o.hidden = q && !o.textContent.toLowerCase().includes(q));
-    };
-    m.querySelector('#tp').onchange = e => m.querySelector('#wrapSel').style.display = e.target.value==='geral' ? 'none' : '';
-    m.querySelector('#ok').onclick = async () => {
-      const tipo = m.querySelector('#tp').value;
-      const ids = tipo==='geral' ? null : [...sel.selectedOptions].map(o=>o.value);
-      const { data:novo, error } = await sb.rpc('fn_open_inventory', {
-        p_tipo:tipo, p_observacao:m.querySelector('#obs').value||null,
-        p_products: (ids && ids.length) ? ids : null, p_lots:null });
-      if(error) return err(error);
-      m.remove(); location.hash = 'inventario?i=' + novo;
-    };
+    const lotes = await sb.rpc('fn_lotes_para_inventario', { p_apenas_com_saldo:true })
+      .then(r => r.data || []);
+    abrirSeletorDeLotes({
+      titulo: 'Novo inventário',
+      lotes,
+      rodape: `
+        <div class="filters" style="margin-bottom:0">
+          <div class="fld"><label>Tipo</label><select id="tp">
+            <option value="pontual">Pontual — alguns lotes</option>
+            <option value="ciclico">Cíclico — contagem rotativa</option>
+            <option value="geral">Geral — todos os lotes com saldo</option></select></div>
+          <div class="fld" style="flex:1;min-width:240px"><label>Observação</label>
+            <input id="obs" placeholder="ex.: contagem do corredor A"></div>
+        </div>`,
+      rotuloBotao: 'Abrir inventário',
+      acao: async (m, escolhidos) => {
+        const tipo = m.querySelector('#tp').value;
+        if(tipo !== 'geral' && !escolhidos.length){
+          toast('Escolha pelo menos um lote — ou selecione o tipo Geral.', 'err'); return false;
+        }
+        const { data:novoId, error } = await sb.rpc('fn_open_inventory', {
+          p_tipo: tipo, p_observacao: m.querySelector('#obs').value || null,
+          p_products: null, p_lots: tipo === 'geral' ? null : escolhidos });
+        if(error){ err(error); return false; }
+        location.hash = 'inventario?i=' + novoId;
+        return true;
+      }
+    });
   });
 };
+
+/* Seletor de lotes: o inventário é contado POR LOTE, então a escolha também é.
+   Um produto com cinco lotes vira cinco contagens independentes — e contar um
+   lote não obriga a contar os outros quatro. */
+function abrirSeletorDeLotes({ titulo, lotes, rodape = '', rotuloBotao, acao }){
+  const m = modal(titulo, `
+    <div class="hint">O saldo esperado de cada lote é <b>congelado agora</b>, no instante da abertura.
+    Se o estoque se mexer enquanto você conta, a comparação continua justa.</div>
+    <div class="filters" style="margin-bottom:10px">
+      <div class="fld" style="flex:1;min-width:260px"><label>Filtrar</label>
+        <input id="fl" placeholder="código, descrição ou número do lote" autocomplete="off"></div>
+      <div class="fld"><label>Mostrar</label><select id="ord">
+        <option value="sku">Por código</option>
+        <option value="valor">Maior valor parado</option>
+        <option value="idade">Mais antigos</option>
+        <option value="inv">Há mais tempo sem inventário</option></select></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn gh sm" id="todos">Marcar os visíveis</button></div>
+    </div>
+    <div id="resumoSel" style="font-size:12.5px;color:var(--tx2);margin-bottom:8px"></div>
+    <div class="scroll" style="max-height:340px;border:1px solid var(--line);border-radius:9px">
+      <table><thead><tr><th style="width:34px"></th><th>Código</th><th>Descrição</th><th>Lote</th>
+        <th class="num">Saldo</th><th class="num">Valor</th><th class="num">Dias</th>
+        <th class="num">S/ invent.</th></tr></thead>
+      <tbody id="tbLotes"></tbody></table>
+    </div>
+    ${rodape}
+    <div style="margin-top:16px"><button class="btn" id="okSel">${esc(rotuloBotao)}</button></div>`, true);
+
+  const marcados = new Set();
+  let visiveis = [];
+
+  const desenhar = () => {
+    const q = m.querySelector('#fl').value.toLowerCase().trim();
+    const ord = m.querySelector('#ord').value;
+    visiveis = lotes.filter(l => !q ||
+      (l.sku + ' ' + l.descricao + ' ' + l.numero_lote).toLowerCase().includes(q));
+    const n = v => Number(v ?? -1);
+    visiveis.sort((a,b) => ord==='valor' ? n(b.valor_atual)-n(a.valor_atual)
+                        : ord==='idade' ? n(b.dias_em_estoque)-n(a.dias_em_estoque)
+                        : ord==='inv'   ? n(b.dias_sem_inventario)-n(a.dias_sem_inventario)
+                        : String(a.sku+a.numero_lote).localeCompare(String(b.sku+b.numero_lote)));
+
+    m.querySelector('#tbLotes').innerHTML = visiveis.length ? visiveis.slice(0,400).map(l=>`
+      <tr data-lot="${l.lot_id}" style="cursor:pointer">
+        <td><input type="checkbox" ${marcados.has(l.lot_id)?'checked':''} style="width:auto"></td>
+        <td class="mono">${esc(l.sku)}</td><td>${esc(l.descricao)}</td>
+        <td class="mono">${esc(l.numero_lote)}${l.lote_generico?' <span class="tag t-mut">genérico</span>':''}</td>
+        <td class="num">${nf(l.qtd_atual)}</td><td class="num">${money(l.valor_atual)}</td>
+        <td class="num">${nf(l.dias_em_estoque)}</td>
+        <td class="num">${l.dias_sem_inventario===null?'nunca':nf(l.dias_sem_inventario)}</td>
+      </tr>`).join('')
+      : '<tr><td colspan="8" class="empty">Nenhum lote com esse filtro.</td></tr>';
+
+    m.querySelectorAll('#tbLotes tr[data-lot]').forEach(tr => {
+      tr.onclick = e => {
+        const id = tr.dataset.lot;
+        marcados.has(id) ? marcados.delete(id) : marcados.add(id);
+        tr.querySelector('input').checked = marcados.has(id);
+        resumir();
+        if(e.target.tagName === 'INPUT') e.stopPropagation();
+      };
+    });
+    resumir();
+  };
+
+  const resumir = () => {
+    const sel = lotes.filter(l => marcados.has(l.lot_id));
+    const valor = sel.reduce((a,l)=>a+Number(l.valor_atual||0),0);
+    const prods = new Set(sel.map(l=>l.product_id)).size;
+    m.querySelector('#resumoSel').innerHTML = marcados.size
+      ? `<b>${nf(marcados.size)} lote(s)</b> de ${nf(prods)} produto(s) · ${money(valor)} a conferir
+         · <a style="cursor:pointer" id="limpar">limpar seleção</a>`
+      : `${nf(visiveis.length)} lote(s) na lista · nenhum marcado ainda`;
+    const lp = m.querySelector('#limpar');
+    if(lp) lp.onclick = () => { marcados.clear(); desenhar(); };
+  };
+
+  m.querySelector('#fl').oninput = desenhar;
+  m.querySelector('#ord').onchange = desenhar;
+  m.querySelector('#todos').onclick = () => {
+    const todosMarcados = visiveis.every(l => marcados.has(l.lot_id));
+    visiveis.slice(0,400).forEach(l => todosMarcados ? marcados.delete(l.lot_id) : marcados.add(l.lot_id));
+    desenhar();
+  };
+  m.querySelector('#okSel').onclick = async () => {
+    const btn = m.querySelector('#okSel'); btn.disabled = true;
+    const ok = await acao(m, [...marcados]);
+    if(ok) m.remove(); else btn.disabled = false;
+  };
+  desenhar();
+  setTimeout(()=>m.querySelector('#fl').focus(), 60);
+}
 
 async function telaContagem(invId){
   const [{data:inv}, itens] = await Promise.all([
@@ -1671,6 +1759,7 @@ async function telaContagem(invId){
     `Corte em ${dts(inv.data_hora_corte)} · aberto por ${esc(inv.criado_por||'—')}${inv.aprovado_por?` · aprovado por ${esc(inv.aprovado_por)}`:''}`,
     `<button class="btn gh sm" onclick="location.hash='inventario'">Voltar</button>
      <button class="btn gh sm" id="exp">Exportar Excel</button>
+     ${!fechado?`<button class="btn gh sm" id="addLotes">Acrescentar lotes</button>`:''}
      ${podeAprovar?`<button class="btn gh sm dg" id="cancelar">Cancelar inventário</button>
      <button class="btn" id="aprovar">Aprovar e gerar ajustes</button>`:''}`) + `
   <div class="cards">
@@ -1766,6 +1855,29 @@ async function telaContagem(invId){
     Esperado:i.expected_qty,Contado:i.counted_qty,Divergencia:i.divergencia,
     CustoUnit:i.custo_unitario,ImpactoRS:i.impacto_valor,Motivo:i.motivo,Observacao:i.observacao,
     ContadoPor:i.contado_por})), `${inv.codigo}.xlsx`));
+
+  on('#addLotes','click', async () => {
+    const jaTem = new Set(itens.map(i=>i.lot_id));
+    const lotes = await sb.rpc('fn_lotes_para_inventario', { p_apenas_com_saldo:false })
+      .then(r => (r.data||[]).filter(l => !jaTem.has(l.lot_id)));
+    if(!lotes.length) return toast('Todos os lotes já estão neste inventário.', 'err');
+    abrirSeletorDeLotes({
+      titulo: `Acrescentar lotes — ${inv.codigo}`,
+      lotes,
+      rodape: `<div class="hint" style="margin:10px 0 0">O saldo esperado destes lotes será congelado
+        no mesmo corte da abertura (${dts(inv.data_hora_corte)}), para todos os itens do inventário
+        serem comparados contra o mesmo instante.</div>`,
+      rotuloBotao: 'Acrescentar ao inventário',
+      acao: async (m, escolhidos) => {
+        if(!escolhidos.length){ toast('Escolha pelo menos um lote.', 'err'); return false; }
+        const { data:qtd, error } = await sb.rpc('fn_add_inventory_items', {
+          p_inventory: invId, p_lots: escolhidos });
+        if(error){ err(error); return false; }
+        toast(`${nf(qtd)} lote(s) acrescentado(s).`); route();
+        return true;
+      }
+    });
+  });
 
   on('#cancelar','click', () => {
     const m = modal('Cancelar inventário', `
