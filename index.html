@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.5</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.6</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v3.5';
+const VERSAO = 'v3.6';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -256,6 +256,20 @@ const err = e => {
 /* A API do Supabase devolve no máximo 1000 linhas por requisição. Pedir .limit(3000)
    não dá erro: ela simplesmente entrega 1000 e o total somado na tela sai menor que
    o real, sem nenhum aviso. Toda listagem grande passa por aqui. */
+// mesma paginação para funções do banco: uma função que devolve 1.120 linhas
+// entrega só 1.000, e as últimas somem da tela sem qualquer aviso
+const rpcAll = async (nome, args = {}, passo = 1000) => {
+  let tudo = [], ini = 0;
+  for(;;){
+    const { data, error } = await sb.rpc(nome, args).range(ini, ini + passo - 1);
+    if(error) throw error;
+    tudo = tudo.concat(data || []);
+    if(!data || data.length < passo) return tudo;
+    ini += passo;
+    if(ini > 100000) return tudo;
+  }
+};
+
 const fetchAll = async (build, passo = 1000) => {
   let tudo = [], ini = 0;
   for(;;){
@@ -1656,9 +1670,8 @@ ROUTES.produto = async () => {
    ========================================================= */
 ROUTES.giro = async () => {
   const meses = Number(S.settings.consumo_meses || 3);
-  const { data, error } = await sb.rpc('fn_giro', { p_meses: meses });
-  if(error) return err(error);
-  const comSaldo = (data||[]).filter(r => Number(r.qtd_atual) > 0);
+  const data = await rpcAll('fn_giro', { p_meses: meses });
+  const comSaldo = data.filter(r => Number(r.qtd_atual) > 0);
 
   const cont = st => comSaldo.filter(r=>r.status===st).length;
   const valor = st => comSaldo.filter(r=>r.status===st).reduce((a,r)=>a+Number(r.valor_atual||0),0);
@@ -1765,8 +1778,7 @@ ROUTES.inventario = async () => {
   </table></div></div></div>`;
 
   on('#novo','click', async () => {
-    const lotes = await sb.rpc('fn_lotes_para_inventario', { p_apenas_com_saldo:true })
-      .then(r => r.data || []);
+    const lotes = await rpcAll('fn_lotes_para_inventario', { p_apenas_com_saldo:true });
     abrirSeletorDeLotes({
       titulo: 'Novo inventário',
       lotes,
@@ -1837,7 +1849,8 @@ function abrirSeletorDeLotes({ titulo, lotes, rodape = '', rotuloBotao, acao }){
                         : ord==='inv'   ? n(b.dias_sem_inventario)-n(a.dias_sem_inventario)
                         : String(a.sku+a.numero_lote).localeCompare(String(b.sku+b.numero_lote)));
 
-    m.querySelector('#tbLotes').innerHTML = visiveis.length ? visiveis.slice(0,400).map(l=>`
+    const limite = 600, cortou = visiveis.length > limite;
+    m.querySelector('#tbLotes').innerHTML = visiveis.length ? visiveis.slice(0,limite).map(l=>`
       <tr data-lot="${l.lot_id}" style="cursor:pointer">
         <td><input type="checkbox" ${marcados.has(l.lot_id)?'checked':''} style="width:auto"></td>
         <td class="mono">${esc(l.sku)}</td><td>${esc(l.descricao)}</td>
@@ -1847,6 +1860,9 @@ function abrirSeletorDeLotes({ titulo, lotes, rodape = '', rotuloBotao, acao }){
         <td class="num">${l.dias_sem_inventario===null?'nunca':nf(l.dias_sem_inventario)}</td>
       </tr>`).join('')
       : '<tr><td colspan="8" class="empty">Nenhum lote com esse filtro.</td></tr>';
+    if(cortou) m.querySelector('#tbLotes').insertAdjacentHTML('beforeend',
+      `<tr><td colspan="8" class="empty">Mostrando ${nf(limite)} de ${nf(visiveis.length)} lotes.
+        Use o filtro para chegar no que procura — os demais continuam disponíveis.</td></tr>`);
 
     m.querySelectorAll('#tbLotes tr[data-lot]').forEach(tr => {
       tr.onclick = e => {
@@ -1876,7 +1892,7 @@ function abrirSeletorDeLotes({ titulo, lotes, rodape = '', rotuloBotao, acao }){
   m.querySelector('#ord').onchange = desenhar;
   m.querySelector('#todos').onclick = () => {
     const todosMarcados = visiveis.every(l => marcados.has(l.lot_id));
-    visiveis.slice(0,400).forEach(l => todosMarcados ? marcados.delete(l.lot_id) : marcados.add(l.lot_id));
+    visiveis.slice(0,600).forEach(l => todosMarcados ? marcados.delete(l.lot_id) : marcados.add(l.lot_id));
     desenhar();
   };
   m.querySelector('#okSel').onclick = async () => {
@@ -2000,8 +2016,8 @@ async function telaContagem(invId){
 
   on('#addLotes','click', async () => {
     const jaTem = new Set(itens.map(i=>i.lot_id));
-    const lotes = await sb.rpc('fn_lotes_para_inventario', { p_apenas_com_saldo:false })
-      .then(r => (r.data||[]).filter(l => !jaTem.has(l.lot_id)));
+    const lotes = (await rpcAll('fn_lotes_para_inventario', { p_apenas_com_saldo:false }))
+      .filter(l => !jaTem.has(l.lot_id));
     if(!lotes.length) return toast('Todos os lotes já estão neste inventário.', 'err');
     abrirSeletorDeLotes({
       titulo: `Acrescentar lotes — ${inv.codigo}`,
@@ -2163,7 +2179,7 @@ ROUTES.ajustes = async () => {
 ROUTES.sucata = async () => {
   const [serie, porProduto] = await Promise.all([
     sb.rpc('fn_sucata', { p_meses:12 }).then(r => r.data || []),
-    sb.rpc('fn_sucata_por_produto', { p_meses:12 }).then(r => r.data || [])
+    rpcAll('fn_sucata_por_produto', { p_meses:12 })
   ]);
 
   const mesAtual = serie[serie.length-1] || {};
@@ -2254,8 +2270,7 @@ ROUTES.sucata = async () => {
    ALERTAS / ANOMALIAS
    ========================================================= */
 ROUTES.anomalias = async () => {
-  const { data, error } = await sb.rpc('fn_anomalias');
-  if(error) return err(error);
+  const data = await rpcAll('fn_anomalias');
   const grupos = {};
   (data||[]).forEach(a => (grupos[a.regra] = grupos[a.regra]||[]).push(a));
   const TT = { AJUSTES_FREQUENTES:'Produtos com muitos ajustes', SALDO_NEGATIVO:'Saldo negativo',
