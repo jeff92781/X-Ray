@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.0</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.2</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.0';
+const VERSAO = 'v4.2';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -1265,6 +1265,18 @@ async function renderPreview(file, abas){
   const { data:mz } = await sb.from('erp_snapshots').select('codigo,data_referencia').eq('marco_zero',true).maybeSingle();
   window.__mzRef = mz?.data_referencia || null;
 
+  /* Única trava dos arquivos de movimento: nota que já entrou antes. Uma NF tem
+     várias linhas — isso é normal. O problema é a MESMA nota ser importada duas
+     vezes, que é o que dobraria o saldo. */
+  const docsDoArquivo = [...new Set(validas.flatMap(a =>
+    a.tipo === 'saldo_erp' ? [] : a.dados.map(r => r.documento).filter(Boolean)))];
+  const jaImportados = new Set();
+  for(let i = 0; i < docsDoArquivo.length; i += 150){
+    const { data:achados } = await sb.from('stock_movements')
+      .select('documento').in('documento', docsDoArquivo.slice(i, i+150)).limit(1000);
+    (achados||[]).forEach(d => jaImportados.add(String(d.documento)));
+  }
+
   let html = '';
   for(const a of validas){
     const somaQtd = a.dados.reduce((s,r)=>s+Number(r.qtd||0),0);
@@ -1281,7 +1293,11 @@ async function renderPreview(file, abas){
       ? a.dados.filter(r => Math.abs(r.qtd - (r.empenho + r.disponivel)) > 0.01).length : 0;
     const somaDisp = a.tipo==='saldo_erp' ? a.dados.reduce((x,r)=>x+Number(r.disponivel||0),0) : 0;
     const somaEmp  = a.tipo==='saldo_erp' ? a.dados.reduce((x,r)=>x+Number(r.empenho||0),0) : 0;
-    const bloqueia = (chkQtd===false) || incoer>0;   // TES/CFOP não bloqueia mais: o tipo é você quem declara
+    const docsRepetidos = a.tipo==='saldo_erp' ? []
+      : [...new Set(a.dados.map(r=>r.documento).filter(d => d && jaImportados.has(String(d))))];
+    // Estoque Atual: a conferência saldo = empenho + disponível continua travando,
+    // porque é ela que impede um arquivo lido errado virar saldo errado no razão.
+    const bloqueia = docsRepetidos.length > 0 || (a.tipo==='saldo_erp' && incoer > 0);
 
     html += `<div class="panel" data-aba="${esc(a.name)}">
       <div class="ph"><h3>${esc(a.name)} <span class="sub">→ ${SHEETS[a.tipo].rotulo}</span></h3>
@@ -1299,7 +1315,11 @@ async function renderPreview(file, abas){
           <div class="card"><div class="lb">Disponível</div><div class="vl" style="font-size:19px">${nf(somaDisp)}</div>
             <div class="ft">${incoer?'✖ '+nf(incoer)+' linha(s) não fecham':'✔ saldo = empenho + disponível'}</div></div>`:''}
         </div>
-        ${incoer?`<div class="msg err" style="display:block"><b>Leitura numérica inconsistente.</b>
+        ${docsRepetidos.length?`<div class="msg err" style="display:block">
+          <b>Nota já importada — importação bloqueada.</b> ${nf(docsRepetidos.length)} nota(s) deste arquivo
+          já estão no sistema: ${esc(docsRepetidos.slice(0,10).join(', '))}${docsRepetidos.length>10?'…':''}.
+          Importar de novo dobraria o saldo delas. Retire essas notas do arquivo, ou importe só o período novo.</div>`:''}
+        ${incoer?`<div class="msg ${a.tipo==='saldo_erp'?'err':''}" style="display:block${a.tipo==='saldo_erp'?'':';background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a'}"><b>Leitura numérica inconsistente.</b>
           ${nf(incoer)} linha(s) em que <b>Saldo Lote ≠ Empenho + Disponível</b>. No ERP essa conta sempre fecha,
           então há perda de informação no arquivo, não na conta. Importação bloqueada.<br>
           Formato detectado: <b>${esc(window.__fmt||'?')}</b>.
@@ -1308,8 +1328,8 @@ async function renderPreview(file, abas){
             <b>direto do ERP em .xlsx</b>, ou abra o CSV pelo assistente de importação do Excel escolhendo
             <b>Português (Brasil)</b>, sem duplo clique.`
           : `Reexporte do ERP e me avise se persistir.`}</div>`:''}
-        ${chkQtd===false?`<div class="msg err" style="display:block">A soma das linhas não bate com a linha TOTAL do arquivo.
-          Diferença de ${nf(Math.abs(somaQtd-a.checksum.qtd),2)}. Importação bloqueada — confira a exportação do ERP.</div>`:''}
+        ${chkQtd===false?`<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">A soma das linhas não bate com a linha TOTAL do arquivo.
+          Diferença de ${nf(Math.abs(somaQtd-a.checksum.qtd),2)}. Confira a exportação do ERP — a importação segue liberada.</div>`:''}
         ${a.tipo!=='saldo_erp'?`
         <div class="filters" style="margin-bottom:2px">
           <div class="fld" style="min-width:260px"><label>O que é este arquivo?</label>
@@ -1360,18 +1380,26 @@ async function renderPreview(file, abas){
           <label><input type="checkbox" id="mz_${esc(a.name)}" style="width:auto;margin-right:7px">
           Usar como <b>Marco Zero</b> (saldo inicial do razão)</label>
           <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">Marque apenas na primeira carga. Cria o saldo de partida de cada lote.</div></div>`:''}
-        <div class="scroll" style="max-height:230px;margin-top:12px"><table>
+        <div style="margin:14px 0 6px;font-size:12.5px;color:var(--tx2)">
+          <b>Prévia</b> — mostrando ${nf(Math.min(a.dados.length, 30))} de <b>${nf(a.dados.length)}</b> linha(s).
+          A importação vai gravar <b>todas as ${nf(a.dados.length)}</b>, não apenas as visíveis aqui.
+        </div>
+        <div class="scroll" style="max-height:300px"><table>
           <thead><tr>${Object.keys(a.dados[0]).map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead>
-          <tbody>${a.dados.slice(0,8).map(r=>`<tr>${Object.values(r).map(v=>`<td>${esc(v==null?'—':v)}</td>`).join('')}</tr>`).join('')}</tbody>
+          <tbody>${a.dados.slice(0,30).map(r=>`<tr>${Object.values(r).map(v=>`<td>${esc(v==null?'—':v)}</td>`).join('')}</tr>`).join('')}
+            ${a.dados.length>30?`<tr><td colspan="${Object.keys(a.dados[0]).length}" class="empty">
+              e mais ${nf(a.dados.length-30)} linha(s) que serão importadas normalmente</td></tr>`:''}
+          </tbody>
         </table></div>
         <div style="margin-top:14px">
-          <button class="btn" ${bloqueia?'disabled':''} data-go="${esc(a.name)}">Confirmar importação desta aba</button>
+          <button class="btn" ${bloqueia?'disabled':''} data-go="${esc(a.name)}">Confirmar importação de ${nf(a.dados.length)} linha(s)</button>
         </div>
       </div></div>`;
   }
   $('#prev').innerHTML = html;
   validas.forEach(a => {
     const b = $(`[data-go="${CSS.escape(a.name)}"]`); if(!b) return;
+    b.dataset.rotulo = b.textContent;
     b.onclick = () => runImport(file, a, b);
     const sel = $(`#tp_${CSS.escape(a.name)}`);
     if(sel){
@@ -1460,7 +1488,7 @@ async function runImport(file, aba, btn){
         <button class="btn" onclick="document.querySelector('.modal').remove(); route()">Continuar importando</button>
         <button class="btn gh" onclick="location.hash='movimentos';document.querySelector('.modal').remove()">Ver movimentações</button>
       </div>`, true);
-  }catch(e){ err(e); btn.disabled=false; btn.textContent='Confirmar importação desta aba'; }
+  }catch(e){ err(e); btn.disabled=false; btn.textContent = btn.dataset.rotulo || 'Confirmar importação'; }
 }
 
 /* =========================================================
