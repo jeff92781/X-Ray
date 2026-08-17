@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.7</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v3.9</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v3.7';
+const VERSAO = 'v3.9';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -581,7 +581,7 @@ ROUTES.lotes = async () => {
       <td>${r.lote_pai ? `<span class="tag t-info" title="Fracionado de ${esc(r.lote_pai)} em ${dt(r.fracionado_em)}">de ${esc(r.lote_pai)}</span>`
             : r.lotes_filhos > 0 ? `<span class="tag t-mut">${nf(r.lotes_filhos)} fracionamento(s)</span>` : ''}</td>
       <td>${(can('admin','auditor') && Number(r.qtd_atual) > 0)
-            ? `<button class="btn sm gh" onclick="desmontar('${r.lot_id}','${esc(r.sku)}','${esc(r.numero_lote)}',${r.qtd_atual},'${esc(r.unidade||'')}')">Desmontar</button>`
+            ? `<button class="btn sm gh" onclick="desmontar('${r.lot_id}','${esc(r.sku)}','${esc(r.numero_lote)}',${r.qtd_atual},'${esc(r.unidade||'')}','${r.product_id}')">Desmontar</button>`
             : ''}</td>
     </tr>`).join('') : '<tr><td colspan="13" class="empty">Nenhum lote encontrado.</td></tr>';
   };
@@ -595,57 +595,114 @@ ROUTES.lotes = async () => {
 /* Desmontagem de lote: ao fracionar uma bobina, a parte cortada vira um lote
    com número próprio para não se misturar de volta ao original. O saldo do
    produto não muda — é transferência interna, com dois movimentos no Kardex. */
-window.desmontar = (lotId, sku, numeroLote, saldo, unidade) => {
-  const m = modal(`Desmontar lote — ${sku}`, `
-    <div class="hint">A parte fracionada vira um <b>lote novo</b>, com número próprio, e não volta a se juntar
-    ao original. O saldo do produto continua o mesmo: sai do lote de origem e entra no lote fracionado.
-    <br><b>A idade é herdada:</b> o lote novo mantém a data de entrada do original — cortar não rejuvenesce o material.</div>
+/* Desmontagem: a bobina é desmembrada por inteiro nos lances informados.
+   A única regra é a soma fechar com o saldo de origem — nem mais, nem menos.
+   Os números de lote são os que o usuário digitar; se já existirem no produto,
+   o material entra neles em vez de a operação ser recusada. */
+window.desmontar = async (lotId, sku, numeroLote, saldo, unidade, productId) => {
+  const usados = productId
+    ? await sb.rpc('fn_lotes_do_produto', { p_product: productId }).then(r => r.data || [])
+    : [];
 
-    <dl class="kv" style="margin-bottom:18px">
+  const m = modal(`Desmontar lote — ${sku}`, `
+    <div class="hint">O lote <b>${esc(numeroLote)}</b> será desmembrado por inteiro nos lances abaixo e ficará zerado.
+    A soma dos lances tem que dar exatamente <b>${nf(saldo)} ${esc(unidade)}</b>.
+    <br>Os lotes novos herdam a data de entrada da origem — cortar não rejuvenesce o material.</div>
+
+    <dl class="kv" style="margin-bottom:14px">
       <dt>Produto</dt><dd class="mono">${esc(sku)}</dd>
       <dt>Lote de origem</dt><dd class="mono">${esc(numeroLote)}</dd>
-      <dt>Saldo disponível</dt><dd>${nf(saldo)} ${esc(unidade)}</dd></dl>
+      <dt>Saldo a desmembrar</dt><dd>${nf(saldo)} ${esc(unidade)}</dd>
+      ${usados.length?`<dt>Lotes já usados</dt><dd style="font-weight:400">${usados.map(l=>
+        `<span class="tag ${Number(l.saldo)>0?'t-ok':'t-mut'}" title="${Number(l.saldo)>0?'saldo '+nf(l.saldo):'zerado'}">${esc(l.numero_lote)}</span>`).join(' ')}
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:5px">Se repetir um destes, o material entra no lote existente.</div></dd>`:''}
+    </dl>
 
-    <div class="filters">
-      <div class="fld"><label>Quantidade a fracionar</label>
-        <input id="dmQtd" type="number" step="0.0001" max="${saldo}" placeholder="0"></div>
-      <div class="fld" style="flex:1;min-width:200px"><label>Número do lote novo</label>
-        <input id="dmLote" placeholder="deixe vazio para gerar automático"></div>
+    <div class="panel" style="margin-bottom:12px"><div class="pb flush">
+      <table><thead><tr><th style="width:55%">Número do lote</th><th class="num">Quantidade</th><th style="width:44px"></th></tr></thead>
+      <tbody id="dmLinhas"></tbody></table>
+    </div></div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn gh sm" id="dmAdd">+ Acrescentar lance</button>
+      <button class="btn gh sm" id="dmResto">Completar com o que falta</button>
+      <div id="dmSoma" style="margin-left:auto;font-size:13px"></div>
     </div>
+
     <div class="fld"><label>Motivo</label>
-      <input id="dmMotivo" value="Fracionamento para atendimento de pedido"></div>
+      <input id="dmMotivo" value="Desmontagem de bobina"></div>
     <div class="fld"><label>Observação</label><textarea id="dmObs" rows="2" placeholder="opcional"></textarea></div>
-    <div id="dmPrev" style="margin:12px 0;font-size:13px"></div>
-    <button class="btn" id="dmOk">Desmontar lote</button>`);
+    <button class="btn" id="dmOk" disabled>Desmontar lote</button>`, true);
 
-  const prev = () => {
-    const q = Number(m.querySelector('#dmQtd').value||0);
-    const box = m.querySelector('#dmPrev');
-    if(!(q > 0)) return box.innerHTML = '';
-    if(q >= saldo) return box.innerHTML =
-      `<span class="tag t-bad">quantidade precisa ser menor que ${nf(saldo)}</span>
-       <div class="mut" style="margin-top:4px;font-size:12px">Fracionar o saldo inteiro apenas renomearia o lote.</div>`;
-    box.innerHTML = `<span class="tag t-mut">${esc(numeroLote)}: ${nf(saldo)} → ${nf(saldo - q)}</span>
-      &nbsp;<span class="tag t-ok">lote novo: ${nf(q)} ${esc(unidade)}</span>`;
+  const $$ = q => m.querySelector(q);
+  const linhas = () => [...m.querySelectorAll('#dmLinhas tr')].map(tr => ({
+    lote: tr.querySelector('.dmL').value.trim(),
+    qtd: Number(tr.querySelector('.dmQ').value || 0), tr }));
+
+  const somar = () => {
+    const ls = linhas();
+    const soma = ls.reduce((a,x)=>a+x.qtd, 0);
+    const dif = Number((soma - saldo).toFixed(4));
+    const semLote = ls.some(x => x.qtd > 0 && !x.lote);
+    const repetidos = ls.map(x=>x.lote.toLowerCase()).filter((v,i,a)=>v && a.indexOf(v)!==i);
+    const fecha = Math.abs(dif) < 0.0001 && !semLote && !repetidos.length && ls.length > 0;
+
+    $$('#dmSoma').innerHTML = fecha
+      ? `<span class="tag t-ok">soma ${nf(soma)} — fecha com a origem</span>`
+      : repetidos.length ? `<span class="tag t-bad">lote repetido nos lances: ${esc(repetidos[0])}</span>`
+      : semLote ? `<span class="tag t-bad">há lance sem número de lote</span>`
+      : `<span class="tag ${dif<0?'t-warn':'t-bad'}">soma ${nf(soma)} de ${nf(saldo)} · ${dif<0?'faltam '+nf(-dif):'excedeu '+nf(dif)}</span>`;
+
+    $$('#dmOk').disabled = !fecha;
+    ls.forEach(x => {
+      const existe = usados.find(u => u.numero_lote.toLowerCase() === x.lote.toLowerCase());
+      const marca = x.tr.querySelector('.dmInfo');
+      marca.innerHTML = existe
+        ? `<span class="tag t-mut" title="O material entrará neste lote que já existe">já existe · saldo ${nf(existe.saldo)}</span>` : '';
+    });
   };
-  m.querySelector('#dmQtd').oninput = prev;
 
-  m.querySelector('#dmOk').onclick = async () => {
-    const q = Number(m.querySelector('#dmQtd').value||0);
-    if(!(q > 0)) return toast('Informe a quantidade a fracionar.', 'err');
-    if(q >= saldo) return toast(`A quantidade precisa ser menor que o saldo (${nf(saldo)}).`, 'err');
-    m.querySelector('#dmOk').disabled = true;
-    const { data, error } = await sb.rpc('fn_desmontar_lote', {
-      p_lot: lotId, p_quantidade: q,
-      p_novo_lote: m.querySelector('#dmLote').value || null,
-      p_motivo: m.querySelector('#dmMotivo').value || null,
-      p_observacao: m.querySelector('#dmObs').value || null });
-    m.querySelector('#dmOk').disabled = false;
+  const addLinha = (lote = '', qtd = '') => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input class="dmL" value="${esc(lote)}" placeholder="número do lote"
+            style="width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:6px 9px">
+          <div class="dmInfo" style="margin-top:4px"></div></td>
+      <td class="num"><input class="dmQ" type="number" step="0.0001" value="${qtd}" placeholder="0"
+            style="width:130px;text-align:right;background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:6px 9px"></td>
+      <td><button class="btn sm gh dmX" title="Remover lance">✕</button></td>`;
+    $$('#dmLinhas').appendChild(tr);
+    tr.querySelector('.dmL').oninput = somar;
+    tr.querySelector('.dmQ').oninput = somar;
+    tr.querySelector('.dmX').onclick = () => { tr.remove(); somar(); };
+    somar();
+  };
+
+  $$('#dmAdd').onclick = () => addLinha();
+  $$('#dmResto').onclick = () => {
+    const falta = Number((saldo - linhas().reduce((a,x)=>a+x.qtd,0)).toFixed(4));
+    if(falta <= 0) return toast('Já não falta nada para fechar.', 'err');
+    const vazia = linhas().find(x => !x.qtd);
+    if(vazia) { vazia.tr.querySelector('.dmQ').value = falta; somar(); }
+    else addLinha('', falta);
+  };
+
+  $$('#dmOk').onclick = async () => {
+    const partes = linhas().map(x => ({ lote: x.lote, qtd: x.qtd }));
+    $$('#dmOk').disabled = true;
+    const { data, error } = await sb.rpc('fn_desmontar_lote_total', {
+      p_lot: lotId, p_partes: partes,
+      p_motivo: $$('#dmMotivo').value || null,
+      p_observacao: $$('#dmObs').value || null });
+    $$('#dmOk').disabled = false;
     if(error) return err(error);
     m.remove();
-    toast(`Lote ${data.lote_novo} criado com ${nf(data.quantidade)} ${unidade}. Restam ${nf(data.saldo_restante)} no ${numeroLote}.`);
+    toast(`${esc(numeroLote)} desmembrado em ${data.lances.length} lance(s): ${data.lotes_novos} lote(s) novo(s)`
+      + (data.lotes_reaproveitados ? `, ${data.lotes_reaproveitados} reaproveitado(s)` : '') + '.');
     route();
   };
+
+  addLinha(); addLinha();
 };
 
 /* =========================================================
@@ -1999,6 +2056,11 @@ async function telaContagem(invId){
       <label style="font-weight:400;font-size:12.5px"><input type="checkbox" id="cego" style="width:auto;margin-right:6px" checked>
       Contagem às cegas (esconde o esperado)</label></div>
   </div>`:''}
+  ${!fechado?`<div class="panel"><div class="pb" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button class="btn" id="salvarTodos">Salvar todos os preenchidos</button>
+    <button class="btn gh sm" id="motivoTodos">Aplicar motivo aos divergentes</button>
+    <span id="resumoPend" style="font-size:12.5px;color:var(--tx2);margin-left:auto"></span>
+  </div></div>`:''}
   <div class="panel"><div class="pb flush"><div class="scroll"><table>
     <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th class="num">Esperado</th>
       <th class="num" style="width:130px">Contado</th><th class="num">Divergência</th>
@@ -2021,6 +2083,7 @@ async function telaContagem(invId){
         <td class="mono">${esc(i.numero_lote||'—')}</td>
         <td class="num">${mostraEsp ? nf(i.expected_qty) : '<span class="mut">oculto</span>'}</td>
         <td class="num">${fechado ? nf(i.counted_qty) : `<input type="number" step="0.0001" class="cnt"
+              data-esp="${i.expected_qty}"
               value="${contado?i.counted_qty:''}" style="width:110px;text-align:right;background:var(--bg2);
               border:1px solid var(--line);border-radius:6px;padding:5px 8px">`}</td>
         <td class="num ${div===null?'':sgn(div)}">${div===null?'—':nf(div)}</td>
@@ -2038,6 +2101,91 @@ async function telaContagem(invId){
       </tr>`;}).join('') : '<tr><td colspan="10" class="empty">Nada aqui com esse filtro.</td></tr>';
 
     if(fechado) return;
+
+    // divergência recalculada ao digitar, antes de gravar
+    const pintarLinha = tr => {
+      const inp = tr.querySelector('.cnt'); if(!inp) return;
+      const esp = Number(inp.dataset.esp||0), v = inp.value;
+      const cel = tr.children[5];
+      if(v === ''){ cel.textContent = '—'; cel.className = 'num'; return; }
+      const d = Number(v) - esp;
+      cel.textContent = nf(d);
+      cel.className = 'num ' + sgn(d);
+      const rsn = tr.querySelector('.rsn');
+      if(rsn) rsn.style.borderColor = (d !== 0 && !rsn.value) ? 'var(--bad)' : 'var(--line)';
+      resumoPendentes();
+    };
+    const resumoPendentes = () => {
+      const el2 = $('#resumoPend'); if(!el2) return;
+      const trs = [...$('#tb').querySelectorAll('tr[data-id]')];
+      const preenchidos = trs.filter(t => t.querySelector('.cnt')?.value !== '');
+      const semMotivo = preenchidos.filter(t => {
+        const inp = t.querySelector('.cnt');
+        return Number(inp.value) - Number(inp.dataset.esp||0) !== 0 && !t.querySelector('.rsn').value;
+      });
+      el2.innerHTML = `${nf(preenchidos.length)} preenchido(s) na tela`
+        + (semMotivo.length ? ` · <span class="neg">${nf(semMotivo.length)} sem motivo</span>` : '');
+    };
+
+    $('#tb').querySelectorAll('tr[data-id]').forEach(tr => {
+      const inp = tr.querySelector('.cnt');
+      if(inp){ inp.oninput = () => pintarLinha(tr); pintarLinha(tr); }
+      const rsn = tr.querySelector('.rsn');
+      if(rsn) rsn.onchange = () => pintarLinha(tr);
+    });
+
+    on('#salvarTodos','click', async () => {
+      const trs = [...$('#tb').querySelectorAll('tr[data-id]')];
+      const pacote = trs.map(tr => {
+        const inp = tr.querySelector('.cnt');
+        if(!inp || inp.value === '') return null;
+        return { item: tr.dataset.id, contado: Number(inp.value),
+                 motivo: tr.querySelector('.rsn').value || null,
+                 observacao: tr.querySelector('.obs').value || null,
+                 sku: tr.children[0].textContent.trim() };
+      }).filter(Boolean);
+
+      if(!pacote.length) return toast('Nenhuma quantidade preenchida nesta tela.', 'err');
+      const btn = $('#salvarTodos'); btn.disabled = true; btn.textContent = 'Gravando…';
+      const { data, error } = await sb.rpc('fn_count_items_batch', { p_itens: pacote });
+      btn.disabled = false; btn.textContent = 'Salvar todos os preenchidos';
+      if(error) return err(error);
+
+      if(data.recusados){
+        modal('Contagem gravada com pendências', `
+          <div class="cards">
+            <div class="card ok"><div class="lb">Gravados</div><div class="vl">${nf(data.gravados)}</div></div>
+            <div class="card bad"><div class="lb">Recusados</div><div class="vl">${nf(data.recusados)}</div></div>
+          </div>
+          <div class="panel" style="margin-top:8px"><div class="pb flush"><div class="scroll" style="max-height:280px">
+            <table><thead><tr><th>Item</th><th>Motivo da recusa</th></tr></thead>
+            <tbody>${(data.erros||[]).map(e=>`<tr><td class="mono">${esc(e.sku||'—')}</td><td>${esc(e.erro)}</td></tr>`).join('')}</tbody>
+            </table></div></div></div>`, true);
+      } else {
+        toast(`${nf(data.gravados)} contagem(ns) gravada(s).`);
+      }
+      route();
+    });
+
+    on('#motivoTodos','click', () => {
+      const mm = modal('Aplicar motivo aos divergentes', `
+        <div class="hint">Preenche o motivo de todas as linhas <b>desta tela</b> que estão com divergência
+        e ainda sem motivo. Você pode ajustar caso a caso depois.</div>
+        <div class="fld"><label>Motivo</label><select id="mtSel">
+          ${S.reasons.map(r=>`<option value="${r.id}">${esc(r.descricao)}</option>`).join('')}</select></div>
+        <button class="btn" id="mtOk">Aplicar</button>`);
+      mm.querySelector('#mtOk').onclick = () => {
+        const val = mm.querySelector('#mtSel').value;
+        let n = 0;
+        $('#tb').querySelectorAll('tr[data-id]').forEach(tr => {
+          const inp = tr.querySelector('.cnt'), rsn = tr.querySelector('.rsn');
+          if(!inp || inp.value === '' || !rsn) return;
+          if(Number(inp.value) - Number(inp.dataset.esp||0) !== 0 && !rsn.value){ rsn.value = val; n++; pintarLinha(tr); }
+        });
+        mm.remove(); toast(`Motivo aplicado a ${nf(n)} linha(s). Agora use Salvar todos.`);
+      };
+    });
+
     $('#tb').querySelectorAll('tr[data-id]').forEach(tr => {
       const btn = tr.querySelector('.sv'); if(!btn) return;
       const rm = tr.querySelector('.rm');
