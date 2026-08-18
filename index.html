@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.4</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.5</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.4';
+const VERSAO = 'v4.5';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -2411,7 +2411,7 @@ ROUTES.ajustes = async () => {
     </table></div></div>` : ''}
   <div class="panel"><div class="ph"><h3>Lançamentos</h3></div><div class="pb flush"><div class="scroll"><table>
     <thead><tr><th>Data</th><th>Código</th><th>Descrição</th><th>Lote</th><th>Tipo</th>
-      <th class="num">Quantidade</th><th class="num">Valor</th><th>Motivo</th><th>Documento</th><th>Usuário</th></tr></thead>
+      <th class="num">Quantidade</th><th class="num">Valor</th><th>Motivo</th><th>Documento</th><th>Usuário</th><th></th></tr></thead>
     <tbody>${data.length ? data.slice(0,600).map(a=>`<tr>
       <td>${dt(a.movement_date)}</td><td class="mono">${esc(a.sku)}</td><td>${esc(a.descricao)}</td>
       <td class="mono">${esc(a.numero_lote||'—')}</td>
@@ -2419,7 +2419,9 @@ ROUTES.ajustes = async () => {
       <td class="num ${sgn(a.sinal)}">${a.sinal>0?'+':'−'}${nf(a.quantidade)}</td>
       <td class="num ${sgn(a.sinal)}">${money(a.valor_custo)}</td>
       <td>${esc(a.motivo)}</td><td class="mono">${esc(a.documento||'—')}</td><td>${esc(a.usuario||'—')}</td>
-    </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhum ajuste registrado. Ajustes nascem da aprovação de um inventário.</td></tr>'}</tbody>
+      <td>${can('admin','auditor') && !/Correção de ajuste/.test(a.motivo||'')
+        ? `<button class="btn sm gh" onclick="corrigirAjuste('${a.id}',${a.quantidade},'${esc(a.motivo||'')}',${a.quantidade})">Corrigir</button>` : ''}</td>
+    </tr>`).join('') : '<tr><td colspan="11" class="empty">Nenhum ajuste registrado. Ajustes nascem da aprovação de um inventário.</td></tr>'}</tbody>
   </table></div></div></div>`;
 
   on('#exp','click', () => toXlsx(data.map(a=>({Data:a.movement_date,Codigo:a.sku,Descricao:a.descricao,
@@ -2598,8 +2600,14 @@ ROUTES.negativos = async () => {
 
 /* Correção do negativo: traz o material do lote que realmente o recebeu. */
 window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, unidade) => {
-  const lotes = await sb.rpc('fn_lotes_do_produto', { p_product: productId }).then(r => r.data || []);
+  const [lotes, diag] = await Promise.all([
+    sb.rpc('fn_lotes_do_produto', { p_product: productId }).then(r => r.data || []),
+    sb.rpc('fn_diagnostico_negativo', { p_lot: lotDestino }).then(r => r.data || {})
+  ]);
   const comSaldo = lotes.filter(l => Number(l.saldo) > 0);
+  // ajuste neste lote + saída lançada depois dele = inventário aprovado antes de importar as saídas
+  const ajustes = (diag.ajustes || []).filter(a => Number(a.quantidade) - Number(a.ja_corrigido) > 0);
+  const suspeita = ajustes.length > 0 && Number(diag.saidas_apos_ajuste || 0) > 0;
 
   const m = modal(`Corrigir saldo negativo — ${sku}`, `
     <div class="hint">O lote <b>${esc(numeroLote)}</b> está em <b class="neg">−${nf(falta)} ${esc(unidade)}</b>.
@@ -2607,6 +2615,18 @@ window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, 
     Traga a quantidade do lote que realmente recebeu o material: o <b>saldo total do produto não muda</b>,
     e nada entra em perdas, sucata ou consumo. Fica registrado nos dois lotes, com seu nome e o motivo.</div>
 
+    ${suspeita ? `<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
+      <b>Este lote teve ajuste de inventário e depois recebeu saída.</b> Isso costuma significar que o inventário
+      foi aprovado <b>antes</b> de importar as saídas do dia: a baixa que ainda não estava no sistema entrou na
+      conta do ajuste e depois entrou de novo como saída. Nesse caso o conserto não é trazer material de outro
+      lote — é <b>corrigir o ajuste</b>, que ficou maior do que a realidade.
+      <div style="margin-top:10px">${ajustes.map(a=>`
+        <div style="margin-bottom:6px">${dt(a.movement_date)} · ${esc(a.tipo)} de <b>${nf(a.quantidade)}</b>
+          ${a.motivo?`· ${esc(a.motivo)}`:''} ${Number(a.ja_corrigido)>0?`· já corrigido ${nf(a.ja_corrigido)}`:''}
+          <button class="btn sm" style="margin-left:8px"
+            onclick="corrigirAjuste('${a.id}',${Number(a.quantidade)-Number(a.ja_corrigido)},'${esc(a.motivo||'')}',${falta})">Corrigir ajuste</button>
+        </div>`).join('')}</div>
+    </div>` : ''}
     ${comSaldo.length ? `
     <div class="fld"><label>De qual lote veio o material</label>
       <select id="rlOrig">${comSaldo.map(l=>
@@ -2672,6 +2692,52 @@ window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, 
     if(error) return err(error);
     m.remove();
     toast(`${nf(data.quantidade)} realocado de ${data.lote_origem} para ${data.lote_destino}. Saldo agora: ${nf(data.saldo_destino)}.`);
+    route();
+  };
+};
+
+/* Correção de ajuste: quando o inventário foi aprovado antes de importar as
+   saídas, o ajuste absorveu uma baixa que depois entrou de novo. Não se apaga
+   o ajuste — lança-se o contrário, com o mesmo motivo, para o indicador
+   (sucata, perda) voltar ao número real. */
+window.corrigirAjuste = (movId, maximo, motivoOriginal, falta) => {
+  const sugerido = Math.min(maximo, falta);
+  const m = modal('Corrigir ajuste', `
+    <div class="hint">Vai ser lançado um ajuste <b>contrário</b>, vinculado ao original e com o mesmo motivo
+    (${esc(motivoOriginal||'sem motivo')}). Os dois continuam no Kardex — nada é apagado — e o indicador
+    volta ao número real: se o ajuste lançou 39 de sucata mas 12 tinham saído por venda, a sucata do mês
+    passa a contar 27.</div>
+    <dl class="kv" style="margin-bottom:16px">
+      <dt>Ajuste original</dt><dd>${nf(maximo)} ainda sem correção</dd>
+      <dt>Rombo do lote</dt><dd class="neg">−${nf(falta)}</dd></dl>
+    <div class="fld"><label>Quantidade a corrigir</label>
+      <input id="caQtd" type="number" step="0.0001" max="${maximo}" value="${sugerido}">
+      <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">
+        Sugerido: ${nf(sugerido)} — o que falta para o lote voltar a zero.</div></div>
+    <div class="fld"><label>Motivo da correção <span style="color:var(--bad)">*</span></label>
+      <select id="caMotivo">
+        <option>Inventário aprovado antes de importar as saídas do dia</option>
+        <option>Quantidade do ajuste lançada a maior</option>
+        <option>Saída contada duas vezes: no ajuste e na nota</option>
+        <option>Outro (descrever abaixo)</option>
+      </select></div>
+    <div class="fld"><label>Observação</label><textarea id="caObs" rows="2" placeholder="opcional"></textarea></div>
+    <button class="btn" id="caOk">Lançar correção</button>`);
+
+  m.querySelector('#caOk').onclick = async () => {
+    const q = Number(m.querySelector('#caQtd').value||0);
+    if(!(q > 0) || q > maximo) return toast(`Informe uma quantidade entre 0 e ${nf(maximo)}.`, 'err');
+    const mot = m.querySelector('#caMotivo').value;
+    const obs = m.querySelector('#caObs').value;
+    if(mot.startsWith('Outro') && !obs.trim()) return toast('Descreva o motivo na observação.', 'err');
+    m.querySelector('#caOk').disabled = true;
+    const { data, error } = await sb.rpc('fn_corrigir_ajuste', {
+      p_movement: movId, p_quantidade: q, p_motivo: obs ? `${mot} — ${obs}` : mot });
+    m.querySelector('#caOk').disabled = false;
+    if(error) return err(error);
+    m.remove();
+    document.querySelectorAll('.modal').forEach(x => x.remove());
+    toast(`Correção lançada: o ajuste líquido passou de ${nf(data.ajuste_original)} para ${nf(data.ajuste_liquido)}.`);
     route();
   };
 };
