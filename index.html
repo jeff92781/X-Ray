@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.2</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.3</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.2';
+const VERSAO = 'v4.3';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -344,6 +344,7 @@ const MENU = [
   {g:'Auditoria'},
   {id:'conciliacao', t:'Conciliação ERP',i:'⇋'},
   {id:'divergencias',t:'Divergências',   i:'⚠'},
+  {id:'negativos',   t:'Saldos negativos',i:'⊘'},
   {id:'ajustes',     t:'Ajustes',        i:'±'},
   {id:'sucata',      t:'Sucata',         i:'✂'},
   {id:'anomalias',   t:'Alertas',        i:'◈'},
@@ -2536,6 +2537,145 @@ ROUTES.sucata = async () => {
   }
 };
 
+
+/* =========================================================
+   SALDOS NEGATIVOS — correção de lançamento em lote errado.
+   Saldo negativo quase nunca significa material faltando: significa que a
+   saída foi baixada de um lote onde a entrada nunca foi lançada. O conserto
+   é realocar entre lotes, não ajustar — ajuste criaria perda falsa de um lado
+   e sobra falsa do outro, e os dois entrariam nos indicadores.
+   ========================================================= */
+ROUTES.negativos = async () => {
+  const neg = await rpcAll('fn_saldos_negativos');
+  const resolvivel = neg.filter(n => Number(n.saldo_disponivel_no_produto) >= Math.abs(Number(n.saldo)));
+  const semLastro = neg.filter(n => Number(n.saldo_produto) < 0);
+  const valorTotal = neg.reduce((a,n)=>a+Math.abs(Number(n.valor||0)),0);
+
+  $('#view').innerHTML = header('Saldos negativos',
+    'Lote com saldo negativo é quase sempre erro de lançamento: a saída foi baixada de um lote onde a entrada nunca entrou. O conserto certo é realocar do lote que tem o material — ajuste criaria perda e sobra falsas.',
+    `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
+  <div class="cards">
+    <div class="card ${neg.length?'bad':'ok'}"><div class="lb">Lotes negativos</div><div class="vl">${nf(neg.length)}</div></div>
+    <div class="card"><div class="lb">Valor envolvido</div><div class="vl" style="font-size:19px">${money(valorTotal)}</div></div>
+    <div class="card ok"><div class="lb">Resolvíveis por realocação</div><div class="vl">${nf(resolvivel.length)}</div>
+      <div class="ft">o material está em outro lote do mesmo produto</div></div>
+    <div class="card ${semLastro.length?'bad':''}"><div class="lb">Produto todo negativo</div><div class="vl">${nf(semLastro.length)}</div>
+      <div class="ft">aí falta entrada, não é só lote trocado</div></div>
+  </div>
+
+  ${semLastro.length?`<div class="hint"><b>Atenção nos ${nf(semLastro.length)} com o produto inteiro negativo.</b>
+    Nesses, somando todos os lotes o saldo ainda fica abaixo de zero — então não é lote trocado: falta uma
+    entrada que nunca foi importada, ou uma saída foi lançada em duplicidade. Realocar não resolve;
+    procure a nota de entrada que faltou.</div>`:''}
+
+  <div class="panel"><div class="pb flush"><div class="scroll"><table>
+    <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th class="num">Saldo</th>
+      <th class="num">Valor</th><th class="num">Outros lotes</th><th class="num">Disponível no produto</th>
+      <th class="num">Saldo do produto</th><th>Saídas</th><th></th></tr></thead>
+    <tbody>${neg.length ? neg.map(n=>{
+      const falta = Math.abs(Number(n.saldo));
+      const cobre = Number(n.saldo_disponivel_no_produto) >= falta;
+      return `<tr>
+      <td class="mono"><a style="cursor:pointer" onclick="location.hash='produto?id=${n.product_id}'">${esc(n.sku)}</a></td>
+      <td>${esc(n.descricao)}</td><td class="mono">${esc(n.numero_lote)}</td>
+      <td class="num neg"><b>${nf(n.saldo)}</b></td>
+      <td class="num neg">${money(n.valor)}</td>
+      <td class="num">${nf(n.irmaos_com_saldo)}</td>
+      <td class="num ${cobre?'pos':'neg'}">${nf(n.saldo_disponivel_no_produto)}</td>
+      <td class="num ${Number(n.saldo_produto)<0?'neg':''}">${nf(n.saldo_produto)}</td>
+      <td style="font-size:11.5px">${n.primeira_saida?`${dt(n.primeira_saida)} a ${dt(n.ultima_saida)}`:'—'}</td>
+      <td>${can('admin','auditor') ? (cobre
+        ? `<button class="btn sm" onclick="corrigirNegativo('${n.lot_id}','${n.product_id}','${esc(n.sku)}','${esc(n.numero_lote)}',${falta},'${esc(n.unidade||'')}')">Corrigir</button>`
+        : `<button class="btn sm gh" onclick="corrigirNegativo('${n.lot_id}','${n.product_id}','${esc(n.sku)}','${esc(n.numero_lote)}',${falta},'${esc(n.unidade||'')}')">Ver lotes</button>`) : ''}</td>
+    </tr>`;}).join('') : '<tr><td colspan="10" class="empty">Nenhum saldo negativo. </td></tr>'}</tbody>
+  </table></div></div></div>`;
+
+  on('#exp','click', () => toXlsx(neg.map(n=>({Codigo:n.sku,Descricao:n.descricao,Lote:n.numero_lote,
+    Saldo:n.saldo,Valor:n.valor,OutrosLotesComSaldo:n.irmaos_com_saldo,
+    DisponivelNoProduto:n.saldo_disponivel_no_produto,SaldoDoProduto:n.saldo_produto,
+    PrimeiraSaida:n.primeira_saida,UltimaSaida:n.ultima_saida})), 'saldos-negativos.xlsx'));
+};
+
+/* Correção do negativo: traz o material do lote que realmente o recebeu. */
+window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, unidade) => {
+  const lotes = await sb.rpc('fn_lotes_do_produto', { p_product: productId }).then(r => r.data || []);
+  const comSaldo = lotes.filter(l => Number(l.saldo) > 0);
+
+  const m = modal(`Corrigir saldo negativo — ${sku}`, `
+    <div class="hint">O lote <b>${esc(numeroLote)}</b> está em <b class="neg">−${nf(falta)} ${esc(unidade)}</b>.
+    Isso quase sempre quer dizer que a entrada foi lançada em outro lote e a saída foi baixada deste.
+    Traga a quantidade do lote que realmente recebeu o material: o <b>saldo total do produto não muda</b>,
+    e nada entra em perdas, sucata ou consumo. Fica registrado nos dois lotes, com seu nome e o motivo.</div>
+
+    ${comSaldo.length ? `
+    <div class="fld"><label>De qual lote veio o material</label>
+      <select id="rlOrig">${comSaldo.map(l=>
+        `<option value="${esc(l.numero_lote)}" data-saldo="${l.saldo}">${esc(l.numero_lote)} — saldo ${nf(l.saldo)}</option>`).join('')}
+      </select>
+      <div id="rlInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
+
+    <div class="filters">
+      <div class="fld"><label>Quantidade a trazer</label>
+        <input id="rlQtd" type="number" step="0.0001" value="${falta}"></div>
+      <div class="fld" style="flex:1;min-width:220px"><label>Motivo <span style="color:var(--bad)">*</span></label>
+        <select id="rlMotivo">
+          <option>Entrada lançada em lote errado</option>
+          <option>Número do lote digitado incorretamente</option>
+          <option>Lote informado pelo fornecedor diferente do físico</option>
+          <option>Saída baixada do lote errado</option>
+          <option>Outro (descrever na observação)</option>
+        </select></div>
+    </div>
+    <div class="fld"><label>Observação</label>
+      <textarea id="rlObs" rows="2" placeholder="quem informou, como foi identificado, número da NF de origem…"></textarea></div>
+    <div id="rlPrev" style="margin:12px 0;font-size:13px"></div>
+    <button class="btn" id="rlOk">Realocar e corrigir</button>`
+    : `<div class="msg err" style="display:block">Nenhum outro lote deste produto tem saldo.
+       Somando tudo, o produto está negativo — então não é lote trocado: falta uma entrada que nunca foi
+       importada, ou uma saída foi lançada duas vezes. Procure a nota de entrada antes de mexer no saldo.</div>
+       <div class="panel" style="margin-top:12px"><div class="pb flush"><table>
+       <thead><tr><th>Lote</th><th class="num">Saldo</th><th>Origem</th></tr></thead>
+       <tbody>${lotes.map(l=>`<tr><td class="mono">${esc(l.numero_lote)}</td>
+         <td class="num ${Number(l.saldo)<0?'neg':''}">${nf(l.saldo)}</td><td>${esc(l.origem||'—')}</td></tr>`).join('')}</tbody>
+       </table></div></div>`}`, true);
+
+  if(!comSaldo.length) return;
+
+  const $$ = q => m.querySelector(q);
+  const prev = () => {
+    const q = Number($$('#rlQtd').value||0);
+    const opt = $$('#rlOrig').selectedOptions[0];
+    const saldoOrig = Number(opt?.dataset.saldo||0);
+    $$('#rlInfo').textContent = `Este lote ficará com ${nf(saldoOrig - q)} depois da correção.`;
+    $$('#rlPrev').innerHTML = !(q>0) ? ''
+      : q > saldoOrig ? `<span class="tag t-bad">o lote de origem só tem ${nf(saldoOrig)}</span>`
+      : `<span class="tag t-mut">${esc(opt.value)}: ${nf(saldoOrig)} → ${nf(saldoOrig-q)}</span>
+         &nbsp;<span class="tag ${(-falta+q)>=0?'t-ok':'t-warn'}">${esc(numeroLote)}: ${nf(-falta)} → ${nf(-falta+q)}</span>`;
+    $$('#rlOk').disabled = !(q>0) || q > saldoOrig;
+  };
+  $$('#rlQtd').oninput = prev; $$('#rlOrig').onchange = prev; prev();
+
+  $$('#rlOk').onclick = async () => {
+    const motivo = $$('#rlMotivo').value;
+    const obs = $$('#rlObs').value;
+    if(motivo.startsWith('Outro') && !obs.trim())
+      return toast('Descreva o motivo na observação.', 'err');
+    $$('#rlOk').disabled = true;
+    const { data, error } = await sb.rpc('fn_realocar_lote', {
+      p_product: productId,
+      p_lote_origem: (lotes.find(l => l.numero_lote === $$('#rlOrig').value) || {}).lot_id || null,
+      p_quantidade: Number($$('#rlQtd').value||0),
+      p_lote_destino: lotDestino,
+      p_numero_lote_destino: null,
+      p_motivo: motivo, p_observacao: obs || null });
+    $$('#rlOk').disabled = false;
+    if(error) return err(error);
+    m.remove();
+    toast(`${nf(data.quantidade)} realocado de ${data.lote_origem} para ${data.lote_destino}. Saldo agora: ${nf(data.saldo_destino)}.`);
+    route();
+  };
+};
+
 /* =========================================================
    ALERTAS / ANOMALIAS
    ========================================================= */
@@ -2543,7 +2683,7 @@ ROUTES.anomalias = async () => {
   const data = await rpcAll('fn_anomalias');
   const grupos = {};
   (data||[]).forEach(a => (grupos[a.regra] = grupos[a.regra]||[]).push(a));
-  const TT = { AJUSTES_FREQUENTES:'Produtos com muitos ajustes', SALDO_NEGATIVO:'Saldo negativo',
+  const TT = { AJUSTES_FREQUENTES:'Produtos com muitos ajustes', SALDO_NEGATIVO:'Saldo negativo — corrija em Saldos negativos',
     TRANSITO_PENDENTE:'Transferências sem recebimento', RECEBIMENTO_DIVERGENTE:'Recebimento divergente',
     FIFO_FURADO:'Lote antigo com produto girando', DIVERGENCIA_CRITICA:'Divergências críticas' };
 
