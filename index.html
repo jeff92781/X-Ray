@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.5</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.6</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.5';
+const VERSAO = 'v4.6';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -895,11 +895,14 @@ async function lancamentoManual(){
     $$('#lmOk').disabled = false;
     if(error) return err(error);
     if(!data.ok) return toast(data.erro, 'err');
+    await registrarCausaNeg('lancamento_manual', `${tipo} ${nf(q)} em ${produto.sku}`);
     m.remove();
     toast(`Lançado: ${tipo==='SAIDA'?'−':'+'}${nf(q)} em ${produto.sku} (${money(data.valor)}).`);
     route();
   };
 }
+
+window.lancamentoManual = lancamentoManual;
 
 window.reverter = (id, acao, sku, qtdMax, docOriginal) => {
   const ehDev = acao === 'DEVOLUCAO';
@@ -931,6 +934,8 @@ window.reverter = (id, acao, sku, qtdMax, docOriginal) => {
       p_observacao:m.querySelector('#o').value||null,
       p_documento:doc });
     if(error) return err(error);
+    await registrarCausaNeg(ehDev ? 'devolucao' : 'cancelamento', `NF ${data.documento||docOriginal||''}`);
+    document.querySelectorAll('.modal').forEach(x => x.remove());
     m.remove();
     toast(ehDev ? `Devolução registrada na NF ${data.documento}: ${nf(data.quantidade)} voltou ao estoque.`
                 : `Cancelamento registrado na NF ${data.documento}: ${nf(data.quantidade)} voltou ao estoque.`);
@@ -2548,13 +2553,16 @@ ROUTES.sucata = async () => {
    e sobra falsa do outro, e os dois entrariam nos indicadores.
    ========================================================= */
 ROUTES.negativos = async () => {
-  const neg = await rpcAll('fn_saldos_negativos');
+  const [neg, causas] = await Promise.all([
+    rpcAll('fn_saldos_negativos'),
+    sb.rpc('fn_causas_negativos', { p_meses: 6 }).then(r => r.data || [])
+  ]);
   const resolvivel = neg.filter(n => Number(n.saldo_disponivel_no_produto) >= Math.abs(Number(n.saldo)));
   const semLastro = neg.filter(n => Number(n.saldo_produto) < 0);
   const valorTotal = neg.reduce((a,n)=>a+Math.abs(Number(n.valor||0)),0);
 
   $('#view').innerHTML = header('Saldos negativos',
-    'Lote com saldo negativo é quase sempre erro de lançamento: a saída foi baixada de um lote onde a entrada nunca entrou. O conserto certo é realocar do lote que tem o material — ajuste criaria perda e sobra falsas.',
+    'Saldo negativo é quase sempre erro de lançamento, não material sumido. Clique em Corrigir e diga o que aconteceu: o sistema leva ao conserto certo para aquela causa e registra o motivo — é assim que dá para medir onde o erro nasce.',
     `<button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
   <div class="cards">
     <div class="card ${neg.length?'bad':'ok'}"><div class="lb">Lotes negativos</div><div class="vl">${nf(neg.length)}</div></div>
@@ -2569,6 +2577,17 @@ ROUTES.negativos = async () => {
     Nesses, somando todos os lotes o saldo ainda fica abaixo de zero — então não é lote trocado: falta uma
     entrada que nunca foi importada, ou uma saída foi lançada em duplicidade. Realocar não resolve;
     procure a nota de entrada que faltou.</div>`:''}
+
+  ${causas.length?`<div class="panel"><div class="ph"><h3>Por que ficaram negativos — últimos 6 meses</h3>
+    <span class="tag t-mut">${nf(causas.reduce((a,c)=>a+Number(c.ocorrencias),0))} correções</span></div>
+    <div class="pb flush"><table><thead><tr><th>Causa declarada</th><th class="num">Ocorrências</th>
+      <th>Conserto usado</th><th>Última</th></tr></thead>
+    <tbody>${causas.map(c=>`<tr><td>${esc(c.causa)}</td><td class="num"><b>${nf(c.ocorrencias)}</b></td>
+      <td class="mut">${esc({realocacao:'realocação entre lotes',correcao_ajuste:'correção de ajuste',
+        cancelamento:'cancelamento da nota',devolucao:'devolução',lancamento_manual:'lançamento manual'}[c.ferramenta]||c.ferramenta||'—')}</td>
+      <td>${dt(c.ultima)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="pb" style="font-size:11.5px;color:var(--tx3);border-top:1px solid var(--line)">Contagem por causa que você declarou ao corrigir. É esta tabela que diz se o problema está no
+      recebimento, no inventário ou no faturamento — e se está melhorando.</div></div>`:''}
 
   <div class="panel"><div class="pb flush"><div class="scroll"><table>
     <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th class="num">Saldo</th>
@@ -2598,104 +2617,221 @@ ROUTES.negativos = async () => {
     PrimeiraSaida:n.primeira_saida,UltimaSaida:n.ultima_saida})), 'saldos-negativos.xlsx'));
 };
 
-/* Correção do negativo: traz o material do lote que realmente o recebeu. */
+/* Causa declarada da correção. O sistema já registrava QUAL ferramenta foi usada;
+   isto registra POR QUE — é o que permite medir se o problema é lote errado no
+   recebimento, ajuste feito fora de hora, nota cancelada ou devolução atrasada.
+   Só grava depois que a correção deu certo: navegar pelas opções não polui o dado. */
+window.__causaNeg = null;
+async function registrarCausaNeg(ferramenta, detalhe){
+  const c = window.__causaNeg; window.__causaNeg = null;
+  if(!c || !c.lot) return;
+  try {
+    await sb.rpc('fn_registrar_causa_negativo', {
+      p_lot: c.lot, p_causa: c.causa, p_ferramenta: ferramenta, p_detalhe: detalhe || c.detalhe || null });
+  } catch(e){ /* nunca derruba a correção por causa do registro da causa */ }
+}
+
+/* Correção do negativo — guiada pela causa, não pela ferramenta.
+   As quatro causas abaixo são as que apareceram de verdade na operação. Cada uma
+   tem um conserto diferente, e usar o conserto errado suja o dado: realocar quando
+   o caso era ajuste a maior inventa sobra num lote e some com a sucata do mês. */
 window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, unidade) => {
   const [lotes, diag] = await Promise.all([
     sb.rpc('fn_lotes_do_produto', { p_product: productId }).then(r => r.data || []),
     sb.rpc('fn_diagnostico_negativo', { p_lot: lotDestino }).then(r => r.data || {})
   ]);
-  const comSaldo = lotes.filter(l => Number(l.saldo) > 0);
-  // ajuste neste lote + saída lançada depois dele = inventário aprovado antes de importar as saídas
-  const ajustes = (diag.ajustes || []).filter(a => Number(a.quantidade) - Number(a.ja_corrigido) > 0);
-  const suspeita = ajustes.length > 0 && Number(diag.saidas_apos_ajuste || 0) > 0;
+  const comSaldo   = lotes.filter(l => Number(l.saldo) > 0);
+  const disponivel = comSaldo.reduce((a,l) => a + Number(l.saldo), 0);
+  const ajustes    = (diag.ajustes || []).filter(a => Number(a.quantidade) - Number(a.ja_corrigido) > 0);
+  const saidas     = (diag.saidas  || []);
+  const saidasAbertas = saidas.filter(s => Number(s.quantidade) - Number(s.ja_revertido) > 0);
+  const suspeitaAjuste = ajustes.length > 0 && Number(diag.saidas_apos_ajuste || 0) > 0;
+
+  const CAUSAS = [
+    { id:'lote_errado', tit:'Lançaram com o lote errado',
+      lbl:'Lote errado no recebimento',
+      txt:'A entrada foi lançada com outro número de lote — genérico, digitado errado, ou o lote que veio da matriz não foi respeitado. O material está aqui, com outro nome.',
+      cons:'Realocar entre lotes — o saldo do produto não muda.',
+      ok: disponivel >= falta, rec: disponivel >= falta && !suspeitaAjuste,
+      bloq:'Nenhum outro lote deste produto tem saldo para trazer.' },
+    { id:'ajuste_antes', tit:'Ajuste de inventário lançado antes das saídas',
+      lbl:'Ajuste antes de lançar as saídas',
+      txt:'O inventário foi aprovado antes de importar as saídas do dia. A baixa que ainda não estava no sistema entrou na conta do ajuste e depois entrou de novo como saída.',
+      cons:'Corrigir o ajuste — o indicador (sucata, perda) volta ao número real.',
+      ok: ajustes.length > 0, rec: suspeitaAjuste,
+      bloq:'Este lote não tem ajuste de inventário pendente de correção.' },
+    { id:'nota_cancelada', tit:'A nota de saída foi cancelada',
+      lbl:'Nota de saída cancelada',
+      txt:'A saída chegou pelo arquivo, mas a nota foi cancelada depois. O material nunca saiu.',
+      cons:'Cancelar a nota — a saída continua no Kardex, com a entrada ligada a ela.',
+      ok: saidasAbertas.length > 0, rec:false,
+      bloq:'Este lote não tem saída em aberto para cancelar.' },
+    { id:'devolucao', tit:'Houve devolução que não foi lançada',
+      lbl:'Devolução lançada depois',
+      txt:'O cliente devolveu e a entrada da devolução ainda não entrou no sistema.',
+      cons:'Lançar a devolução sobre a saída — ou manualmente, se a venda é anterior ao Marco Zero.',
+      ok:true, rec:false, bloq:'' }
+  ];
+
+  const btnCausa = c => `
+    <div class="cnOpt${c.ok?'':' off'}" data-c="${c.id}" ${c.ok?'':'title="'+esc(c.bloq)+'"'}>
+      <div class="cnT">${esc(c.tit)} ${c.rec?'<span class="tag t-ok" style="margin-left:6px">provável</span>':''}</div>
+      <div class="cnD">${esc(c.txt)}</div>
+      <div class="cnC">${c.ok ? '→ ' + esc(c.cons) : '<span class="neg">'+esc(c.bloq)+'</span>'}</div>
+    </div>`;
 
   const m = modal(`Corrigir saldo negativo — ${sku}`, `
-    <div class="hint">O lote <b>${esc(numeroLote)}</b> está em <b class="neg">−${nf(falta)} ${esc(unidade)}</b>.
-    Isso quase sempre quer dizer que a entrada foi lançada em outro lote e a saída foi baixada deste.
-    Traga a quantidade do lote que realmente recebeu o material: o <b>saldo total do produto não muda</b>,
-    e nada entra em perdas, sucata ou consumo. Fica registrado nos dois lotes, com seu nome e o motivo.</div>
-
-    ${suspeita ? `<div class="msg" style="display:block;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);color:#e8c26a">
-      <b>Este lote teve ajuste de inventário e depois recebeu saída.</b> Isso costuma significar que o inventário
-      foi aprovado <b>antes</b> de importar as saídas do dia: a baixa que ainda não estava no sistema entrou na
-      conta do ajuste e depois entrou de novo como saída. Nesse caso o conserto não é trazer material de outro
-      lote — é <b>corrigir o ajuste</b>, que ficou maior do que a realidade.
-      <div style="margin-top:10px">${ajustes.map(a=>`
-        <div style="margin-bottom:6px">${dt(a.movement_date)} · ${esc(a.tipo)} de <b>${nf(a.quantidade)}</b>
-          ${a.motivo?`· ${esc(a.motivo)}`:''} ${Number(a.ja_corrigido)>0?`· já corrigido ${nf(a.ja_corrigido)}`:''}
-          <button class="btn sm" style="margin-left:8px"
-            onclick="corrigirAjuste('${a.id}',${Number(a.quantidade)-Number(a.ja_corrigido)},'${esc(a.motivo||'')}',${falta})">Corrigir ajuste</button>
-        </div>`).join('')}</div>
-    </div>` : ''}
-    ${comSaldo.length ? `
-    <div class="fld"><label>De qual lote veio o material</label>
-      <select id="rlOrig">${comSaldo.map(l=>
-        `<option value="${l.lot_id}" data-saldo="${l.saldo}" data-lote="${esc(l.numero_lote)}">${esc(l.numero_lote)} — saldo ${nf(l.saldo)}</option>`).join('')}
-      </select>
-      <div id="rlInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
-
-    <div class="filters">
-      <div class="fld"><label>Quantidade a trazer</label>
-        <input id="rlQtd" type="number" step="0.0001" value="${falta}"></div>
-      <div class="fld" style="flex:1;min-width:220px"><label>Motivo <span style="color:var(--bad)">*</span></label>
-        <select id="rlMotivo">
-          <option>Entrada lançada em lote errado</option>
-          <option>Número do lote digitado incorretamente</option>
-          <option>Lote informado pelo fornecedor diferente do físico</option>
-          <option>Saída baixada do lote errado</option>
-          <option>Outro (descrever na observação)</option>
-        </select></div>
-    </div>
-    <div class="fld"><label>Observação</label>
-      <textarea id="rlObs" rows="2" placeholder="quem informou, como foi identificado, número da NF de origem…"></textarea></div>
-    <div id="rlPrev" style="margin:12px 0;font-size:13px"></div>
-    <button class="btn" id="rlOk">Realocar e corrigir</button>`
-    : `<div class="msg err" style="display:block">Nenhum outro lote deste produto tem saldo.
-       Somando tudo, o produto está negativo — então não é lote trocado: falta uma entrada que nunca foi
-       importada, ou uma saída foi lançada duas vezes. Procure a nota de entrada antes de mexer no saldo.</div>
-       <div class="panel" style="margin-top:12px"><div class="pb flush"><table>
-       <thead><tr><th>Lote</th><th class="num">Saldo</th><th>Origem</th></tr></thead>
-       <tbody>${lotes.map(l=>`<tr><td class="mono">${esc(l.numero_lote)}</td>
-         <td class="num ${Number(l.saldo)<0?'neg':''}">${nf(l.saldo)}</td><td>${esc(l.origem||'—')}</td></tr>`).join('')}</tbody>
-       </table></div></div>`}`, true);
-
-  if(!comSaldo.length) return;
+    <style>
+      .cnOpt{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-bottom:8px;cursor:pointer;transition:.12s}
+      .cnOpt:hover{border-color:var(--ac);background:rgba(255,255,255,.02)}
+      .cnOpt.sel{border-color:var(--ac);background:rgba(74,158,255,.09)}
+      .cnOpt.off{opacity:.42;cursor:not-allowed}
+      .cnOpt.off:hover{border-color:var(--line);background:none}
+      .cnT{font-weight:600;font-size:13.5px}
+      .cnD{font-size:12px;color:var(--tx2);margin-top:3px;line-height:1.45}
+      .cnC{font-size:11.5px;color:var(--tx3);margin-top:5px}
+      .cnLinha{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+      .cnLinha:last-child{border-bottom:0}
+      .cnLinha .cresce{flex:1}
+    </style>
+    <dl class="kv" style="margin-bottom:14px">
+      <dt>Lote</dt><dd class="mono">${esc(numeroLote)}${diag.lote_generico?' <span class="tag t-warn">genérico</span>':''}</dd>
+      <dt>Falta</dt><dd class="neg"><b>−${nf(falta)} ${esc(unidade)}</b></dd>
+      <dt>Outros lotes do produto</dt><dd>${comSaldo.length ? `${nf(disponivel)} disponível em ${comSaldo.length} lote(s)` : 'nenhum com saldo'}</dd>
+    </dl>
+    ${diag.lote_generico ? `<div class="hint">Este é um lote genérico. Quando a entrada é lançada em genérico por pressa, o rastro do lote real se perde — vale conferir com quem recebeu antes de corrigir.</div>`:''}
+    <div style="font-weight:600;margin:4px 0 9px">O que aconteceu com este lote?</div>
+    ${CAUSAS.map(btnCausa).join('')}
+    <div id="cnPainel" style="margin-top:14px"></div>`, true);
 
   const $$ = q => m.querySelector(q);
-  const prev = () => {
-    const q = Number($$('#rlQtd').value||0);
-    const opt = $$('#rlOrig').selectedOptions[0];
-    const saldoOrig = Number(opt?.dataset.saldo||0);
-    $$('#rlInfo').textContent = `Este lote ficará com ${nf(saldoOrig - q)} depois da correção.`;
-    $$('#rlPrev').innerHTML = !(q>0) ? ''
-      : q > saldoOrig ? `<span class="tag t-bad">o lote de origem só tem ${nf(saldoOrig)}</span>`
-      : `<span class="tag t-mut">${esc(opt.dataset.lote)}: ${nf(saldoOrig)} → ${nf(saldoOrig-q)}</span>
-         &nbsp;<span class="tag ${(-falta+q)>=0?'t-ok':'t-warn'}">${esc(numeroLote)}: ${nf(-falta)} → ${nf(-falta+q)}</span>`;
-    $$('#rlOk').disabled = !(q>0) || q > saldoOrig;
-  };
-  $$('#rlQtd').oninput = prev; $$('#rlOrig').onchange = prev; prev();
 
-  $$('#rlOk').onclick = async () => {
-    const motivo = $$('#rlMotivo').value;
-    const obs = $$('#rlObs').value;
-    if(motivo.startsWith('Outro') && !obs.trim())
-      return toast('Descreva o motivo na observação.', 'err');
-    $$('#rlOk').disabled = true;
-    const { data, error } = await sb.rpc('fn_realocar_lote', {
-      p_product: productId,
-      p_lote_origem: $$('#rlOrig').value,
-      p_quantidade: Number($$('#rlQtd').value||0),
-      p_lote_destino: lotDestino,
-      p_numero_lote_destino: null,
-      p_motivo: motivo, p_observacao: obs || null });
-    $$('#rlOk').disabled = false;
-    if(error) return err(error);
-    m.remove();
-    toast(`${nf(data.quantidade)} realocado de ${data.lote_origem} para ${data.lote_destino}. Saldo agora: ${nf(data.saldo_destino)}.`);
-    route();
+  /* ---- painel A: realocação ---- */
+  const painelRealoc = () => {
+    $$('#cnPainel').innerHTML = `
+      <div class="hint">Traga a quantidade do lote que realmente recebeu o material: o <b>saldo total do produto
+      não muda</b>, e nada entra em perdas, sucata ou consumo. Fica registrado nos dois lotes, com seu nome e o motivo.</div>
+      <div class="fld"><label>De qual lote veio o material</label>
+        <select id="rlOrig">${comSaldo.map(l =>
+          `<option value="${l.lot_id}" data-saldo="${l.saldo}" data-lote="${esc(l.numero_lote)}">${esc(l.numero_lote)} — saldo ${nf(l.saldo)}</option>`).join('')}
+        </select>
+        <div id="rlInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
+      <div class="filters">
+        <div class="fld"><label>Quantidade a trazer</label>
+          <input id="rlQtd" type="number" step="0.0001" value="${Math.min(falta, Number(comSaldo[0].saldo))}">
+          <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">Se um lote sozinho não cobrir a falta,
+            traga o que ele tem e repita a correção no próximo.</div></div>
+        <div class="fld" style="flex:1;min-width:220px"><label>Detalhe <span style="color:var(--bad)">*</span></label>
+          <select id="rlMotivo">
+            <option>Entrada lançada em lote genérico</option>
+            <option>Número do lote digitado incorretamente</option>
+            <option>Lote da transferência da matriz não foi respeitado</option>
+            <option>Lote informado pelo fornecedor diferente do físico</option>
+            <option>Saída baixada do lote errado</option>
+            <option>Outro (descrever na observação)</option>
+          </select></div>
+      </div>
+      <div class="fld"><label>Observação</label>
+        <textarea id="rlObs" rows="2" placeholder="quem informou, como foi identificado, número da NF de origem…"></textarea></div>
+      <div id="rlPrev" style="margin:12px 0;font-size:13px"></div>
+      <button class="btn" id="rlOk">Realocar e corrigir</button>`;
+
+    const prev = () => {
+      const q = Number($$('#rlQtd').value||0);
+      const opt = $$('#rlOrig').selectedOptions[0];
+      const saldoOrig = Number(opt?.dataset.saldo||0);
+      $$('#rlInfo').textContent = `Este lote ficará com ${nf(saldoOrig - q)} depois da correção.`;
+      $$('#rlPrev').innerHTML = !(q>0) ? ''
+        : q > saldoOrig ? `<span class="tag t-bad">o lote de origem só tem ${nf(saldoOrig)}</span>`
+        : `<span class="tag t-mut">${esc(opt.dataset.lote)}: ${nf(saldoOrig)} → ${nf(saldoOrig-q)}</span>
+           &nbsp;<span class="tag ${(-falta+q)>=0?'t-ok':'t-warn'}">${esc(numeroLote)}: ${nf(-falta)} → ${nf(-falta+q)}</span>`;
+      $$('#rlOk').disabled = !(q>0) || q > saldoOrig;
+    };
+    $$('#rlQtd').oninput = prev;
+    $$('#rlOrig').onchange = () => {
+      const saldoOrig = Number($$('#rlOrig').selectedOptions[0]?.dataset.saldo||0);
+      $$('#rlQtd').value = Math.min(falta, saldoOrig);
+      prev();
+    };
+    prev();
+
+    $$('#rlOk').onclick = async () => {
+      const motivo = $$('#rlMotivo').value, obs = $$('#rlObs').value;
+      if(motivo.startsWith('Outro') && !obs.trim()) return toast('Descreva o motivo na observação.', 'err');
+      $$('#rlOk').disabled = true;
+      const { data, error } = await sb.rpc('fn_realocar_lote', {
+        p_product: productId, p_lote_origem: $$('#rlOrig').value,
+        p_quantidade: Number($$('#rlQtd').value||0),
+        p_lote_destino: lotDestino, p_numero_lote_destino: null,
+        p_motivo: motivo, p_observacao: obs || null });
+      $$('#rlOk').disabled = false;
+      if(error) return err(error);
+      window.__causaNeg = { lot: lotDestino, causa:'Lote errado no recebimento', detalhe: motivo };
+      await registrarCausaNeg('realocacao', motivo);
+      m.remove();
+      toast(`${nf(data.quantidade)} realocado de ${data.lote_origem} para ${data.lote_destino}. Saldo agora: ${nf(data.saldo_destino)}.`);
+      route();
+    };
   };
+
+  /* ---- painel B: correção de ajuste ---- */
+  const painelAjuste = () => {
+    $$('#cnPainel').innerHTML = `
+      <div class="hint">Não se apaga o ajuste — lança-se o contrário, com o mesmo motivo. Os dois continuam no
+      Kardex e o indicador volta ao número real: se o ajuste lançou 39 de sucata mas 12 tinham saído por venda,
+      a sucata do mês passa a contar 27.</div>
+      ${ajustes.map(a => `<div class="cnLinha">
+        <div class="cresce"><b>${dt(a.movement_date)}</b> · ${esc(a.tipo)} de <b>${nf(a.quantidade)}</b>
+          ${a.motivo?`<div style="color:var(--tx3);font-size:11.5px">${esc(a.motivo)}${Number(a.ja_corrigido)>0?` · já corrigido ${nf(a.ja_corrigido)}`:''}</div>`:''}</div>
+        <button class="btn sm" data-aj="${a.id}" data-max="${Number(a.quantidade)-Number(a.ja_corrigido)}"
+          data-mot="${esc(a.motivo||'')}">Corrigir ajuste</button></div>`).join('')}`;
+    $$('#cnPainel').querySelectorAll('[data-aj]').forEach(b => b.onclick = () => {
+      window.__causaNeg = { lot: lotDestino, causa:'Ajuste antes de lançar as saídas' };
+      corrigirAjuste(b.dataset.aj, Number(b.dataset.max), b.dataset.mot, falta);
+    });
+  };
+
+  /* ---- painéis C e D: sobre as saídas do lote ---- */
+  const painelSaidas = (acao) => {
+    const ehDev = acao === 'DEVOLUCAO';
+    $$('#cnPainel').innerHTML = `
+      <div class="hint">${ehDev
+        ? 'A devolução cria uma entrada ligada à saída original — as duas continuam no Kardex e o consumo do mês é abatido. Se a venda é anterior ao Marco Zero, ela não existe no razão: use o lançamento manual no fim desta lista.'
+        : 'O cancelamento não apaga a saída: cria a entrada ligada a ela, sobre a mesma nota. O histórico continua auditável.'}</div>
+      ${saidasAbertas.length ? saidasAbertas.map(s => `<div class="cnLinha">
+        <div class="cresce"><b>${dt(s.movement_date)}</b> · NF <span class="mono">${esc(s.documento||'sem nota')}</span> · ${nf(s.quantidade)} ${esc(unidade)}
+          <div style="color:var(--tx3);font-size:11.5px">${esc(s.cliente_nome||'sem cliente')} · ${money(s.valor_custo)}${Number(s.ja_revertido)>0?` · já revertido ${nf(s.ja_revertido)}`:''}</div></div>
+        <button class="btn sm ${ehDev?'':'gh'}" data-sd="${s.id}" data-q="${Number(s.quantidade)-Number(s.ja_revertido)}"
+          data-doc="${esc(s.documento||'')}">${ehDev?'Lançar devolução':'Cancelar nota'}</button></div>`).join('')
+        : `<div class="msg err" style="display:block">Este lote não tem saída em aberto.</div>`}
+      ${ehDev ? `<button class="btn gh" id="cnManual" style="margin-top:12px">A venda é anterior ao Marco Zero — lançar manualmente</button>` : ''}`;
+
+    $$('#cnPainel').querySelectorAll('[data-sd]').forEach(b => b.onclick = () => {
+      window.__causaNeg = { lot: lotDestino, causa: ehDev ? 'Devolução lançada depois' : 'Nota de saída cancelada',
+                            detalhe: `NF ${b.dataset.doc||'sem nota'}` };
+      reverter(b.dataset.sd, acao, sku, Number(b.dataset.q), b.dataset.doc);
+    });
+    const bm = $$('#cnManual');
+    if(bm) bm.onclick = () => {
+      window.__causaNeg = { lot: lotDestino, causa:'Devolução lançada depois', detalhe:'venda anterior ao Marco Zero' };
+      m.remove(); lancamentoManual();
+    };
+  };
+
+  const PAINEL = { lote_errado: painelRealoc, ajuste_antes: painelAjuste,
+                   nota_cancelada: () => painelSaidas('CANCELAMENTO'),
+                   devolucao: () => painelSaidas('DEVOLUCAO') };
+
+  m.querySelectorAll('.cnOpt').forEach(o => o.onclick = () => {
+    if(o.classList.contains('off')) return;
+    m.querySelectorAll('.cnOpt').forEach(x => x.classList.remove('sel'));
+    o.classList.add('sel');
+    PAINEL[o.dataset.c]();
+  });
+
+  const auto = CAUSAS.find(c => c.rec);
+  if(auto) m.querySelector(`.cnOpt[data-c="${auto.id}"]`).click();
 };
-
 /* Correção de ajuste: quando o inventário foi aprovado antes de importar as
    saídas, o ajuste absorveu uma baixa que depois entrou de novo. Não se apaga
    o ajuste — lança-se o contrário, com o mesmo motivo, para o indicador
@@ -2735,6 +2871,7 @@ window.corrigirAjuste = (movId, maximo, motivoOriginal, falta) => {
       p_movement: movId, p_quantidade: q, p_motivo: obs ? `${mot} — ${obs}` : mot });
     m.querySelector('#caOk').disabled = false;
     if(error) return err(error);
+    await registrarCausaNeg('correcao_ajuste', mot);
     m.remove();
     document.querySelectorAll('.modal').forEach(x => x.remove());
     toast(`Correção lançada: o ajuste líquido passou de ${nf(data.ajuste_original)} para ${nf(data.ajuste_liquido)}.`);
