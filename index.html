@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.3</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.4</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.3';
+const VERSAO = 'v4.4';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -2610,7 +2610,7 @@ window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, 
     ${comSaldo.length ? `
     <div class="fld"><label>De qual lote veio o material</label>
       <select id="rlOrig">${comSaldo.map(l=>
-        `<option value="${esc(l.numero_lote)}" data-saldo="${l.saldo}">${esc(l.numero_lote)} — saldo ${nf(l.saldo)}</option>`).join('')}
+        `<option value="${l.lot_id}" data-saldo="${l.saldo}" data-lote="${esc(l.numero_lote)}">${esc(l.numero_lote)} — saldo ${nf(l.saldo)}</option>`).join('')}
       </select>
       <div id="rlInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
 
@@ -2649,7 +2649,7 @@ window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, 
     $$('#rlInfo').textContent = `Este lote ficará com ${nf(saldoOrig - q)} depois da correção.`;
     $$('#rlPrev').innerHTML = !(q>0) ? ''
       : q > saldoOrig ? `<span class="tag t-bad">o lote de origem só tem ${nf(saldoOrig)}</span>`
-      : `<span class="tag t-mut">${esc(opt.value)}: ${nf(saldoOrig)} → ${nf(saldoOrig-q)}</span>
+      : `<span class="tag t-mut">${esc(opt.dataset.lote)}: ${nf(saldoOrig)} → ${nf(saldoOrig-q)}</span>
          &nbsp;<span class="tag ${(-falta+q)>=0?'t-ok':'t-warn'}">${esc(numeroLote)}: ${nf(-falta)} → ${nf(-falta+q)}</span>`;
     $$('#rlOk').disabled = !(q>0) || q > saldoOrig;
   };
@@ -2663,7 +2663,7 @@ window.corrigirNegativo = async (lotDestino, productId, sku, numeroLote, falta, 
     $$('#rlOk').disabled = true;
     const { data, error } = await sb.rpc('fn_realocar_lote', {
       p_product: productId,
-      p_lote_origem: (lotes.find(l => l.numero_lote === $$('#rlOrig').value) || {}).lot_id || null,
+      p_lote_origem: $$('#rlOrig').value,
       p_quantidade: Number($$('#rlQtd').value||0),
       p_lote_destino: lotDestino,
       p_numero_lote_destino: null,
