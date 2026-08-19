@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.7</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.8</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.7';
+const VERSAO = 'v4.8';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -714,7 +714,9 @@ ROUTES.movimentos = async () => {
     `${can('admin','auditor')?`<button class="btn" id="manual">Lançar nota manualmente</button>`:''}
      <button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
   <div class="filters">
-    <div class="fld" style="min-width:240px"><label>Produto / documento</label><input id="q" placeholder="código, descrição ou NF"></div>
+    <div class="fld" style="min-width:230px"><label>Produto / documento</label><input id="q" placeholder="código, descrição ou NF"></div>
+    <div class="fld" style="min-width:190px"><label>Lote</label><input id="ql" placeholder="número do lote">
+      <div id="qlInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
     <div class="fld"><label>Tipo</label><select id="tp"><option value="">Todos</option>
       ${['ENTRADA','SAIDA','TRANSF_ENTRADA','TRANSF_SAIDA','DEVOLUCAO','AJUSTE_POSITIVO','AJUSTE_NEGATIVO'].map(t=>`<option>${t}</option>`).join('')}</select></div>
     <div class="fld"><label>De</label><input id="de" type="date"></div>
@@ -732,9 +734,25 @@ ROUTES.movimentos = async () => {
       .select('id,movement_date,tipo,documento,quantidade,sinal,valor_custo,cliente_nome,origem,motivo,status_transito,voided_at,reverses_movement_id,products(sku,descricao),lots(numero_lote)')
       .order('movement_date',{ascending:false}).order('seq',{ascending:false}).limit(500);
     const t=$('#tp').value, de=$('#de').value, ate=$('#ate').value, s=$('#q').value.trim();
+    const sl = $('#ql').value.trim();
     if(t) q = q.eq('tipo',t);
     if(de) q = q.gte('movement_date',de);
     if(ate) q = q.lte('movement_date',ate);
+    if(sl){
+      // busca por lote ignora ponto de milhar: 2015542026 acha "2.015.542.026" também
+      const { data:ls, error:el } = await sb.rpc('fn_buscar_lotes', { p_texto: sl, p_limite: 300 });
+      if(el) return err(el);
+      const lids = (ls||[]).map(l=>l.lot_id);
+      const grafias = [...new Set((ls||[]).map(l=>l.numero_lote))];
+      $('#qlInfo').innerHTML = !lids.length
+        ? '<span class="neg">nenhum lote com esse número</span>'
+        : `${lids.length} lote(s): ${grafias.slice(0,4).map(g=>esc(g)).join(', ')}${grafias.length>4?'…':''}`;
+      if(!lids.length){
+        $('#tb').innerHTML = '<tr><td colspan="10" class="empty">Nenhum lote com esse número.</td></tr>';
+        rows = []; return;
+      }
+      q = q.in('lot_id', lids);
+    } else $('#qlInfo').innerHTML = '';
     if(s){
       // o campo aceita código do produto, descrição ou número do documento:
       // resolvo os produtos primeiro e busco os dois lados de uma vez
@@ -773,6 +791,8 @@ ROUTES.movimentos = async () => {
     </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhuma movimentação. Comece pela Importação.</td></tr>';
   };
   $('#go').onclick = load;
+  $('#q').onkeydown = e => { if(e.key === 'Enter') load(); };
+  $('#ql').onkeydown = e => { if(e.key === 'Enter') load(); };
   on('#manual','click', lancamentoManual);
   $('#exp').onclick = () => toXlsx(rows.map(r=>({Data:r.movement_date,Tipo:r.tipo,Documento:r.documento,
     Produto:r.products?.sku,Descricao:r.products?.descricao,Lote:r.lots?.numero_lote,
