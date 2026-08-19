@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.6</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.7</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.6';
+const VERSAO = 'v4.7';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -711,7 +711,7 @@ window.desmontar = async (lotId, sku, numeroLote, saldo, unidade, productId) => 
    ========================================================= */
 ROUTES.movimentos = async () => {
   $('#view').innerHTML = header('Movimentações','Livro-razão do estoque. Nada aqui é apagado — estornos ficam visíveis com a tarja.',
-    `${can('admin','auditor')?`<button class="btn" id="manual">Lançar manualmente</button>`:''}
+    `${can('admin','auditor')?`<button class="btn" id="manual">Lançar nota manualmente</button>`:''}
      <button class="btn gh sm" id="exp">Exportar Excel</button>`) + `
   <div class="filters">
     <div class="fld" style="min-width:240px"><label>Produto / documento</label><input id="q" placeholder="código, descrição ou NF"></div>
@@ -783,14 +783,20 @@ ROUTES.movimentos = async () => {
 
 /* Lançamento manual: para o movimento que não veio de arquivo nem tem saída no
    sistema para vincular — o caso típico é a devolução de uma venda faturada
-   antes do Marco Zero, que por definição não existe no razão. */
+   antes do Marco Zero, que por definição não existe no razão.
+   Uma nota tem vários itens: o cabeçalho (tipo, data, NF, cliente) é preenchido
+   uma vez e os itens vão sendo acumulados. O envio é tudo ou nada — se um item
+   falhar, nenhum entra: nota meio lançada é pior que nota não lançada, porque
+   ninguém percebe o que ficou faltando. */
 async function lancamentoManual(){
   const prods = await fetchAll(() => sb.from('products').select('id,sku,descricao,unidade').order('sku'));
   const { data:mz } = await sb.from('erp_snapshots').select('data_referencia').eq('marco_zero',true).maybeSingle();
+  const itens = [];   // { product_id, sku, descricao, unidade, numero_lote, quantidade }
 
-  const m = modal('Lançar movimento manualmente', `
+  const m = modal('Lançar nota manualmente', `
     <div class="hint">Use quando não existir arquivo nem saída no sistema para vincular — por exemplo,
     a <b>devolução de uma venda faturada antes do Marco Zero</b>${mz?` (${dt(mz.data_referencia)})`:''}.
+    Preencha o cabeçalho uma vez, acumule os itens da nota e lance tudo de uma vez.
     Todo lançamento manual fica marcado como tal e registrado na auditoria com seu usuário.</div>
 
     <div class="filters">
@@ -801,7 +807,20 @@ async function lancamentoManual(){
       <div class="fld"><label>Data</label><input id="lmData" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
       <div class="fld" style="flex:1;min-width:170px"><label>Nota fiscal / documento</label>
         <input id="lmDoc" placeholder="número da NF"></div>
+      <div class="fld" style="flex:1;min-width:170px"><label>Cliente / origem</label>
+        <input id="lmCli" placeholder="opcional"></div>
     </div>
+    <div class="fld"><label>Observação da nota</label>
+      <textarea id="lmObs" rows="2" placeholder="opcional, mas ajuda na auditoria"></textarea></div>
+
+    <div class="fld" id="lmWrapCc"><label style="font-weight:400">
+      <input type="checkbox" id="lmCc" style="width:auto;margin-right:7px" checked>
+      Venda original anterior ao Marco Zero — <b>não abater do consumo</b></label>
+      <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">A saída nunca foi contada pelo sistema.
+        Se a devolução abatesse o consumo, o consumo médio ficaria menor que a realidade e a cobertura, maior.</div></div>
+
+    <div style="border-top:1px solid var(--line);margin:16px 0 13px"></div>
+    <div style="font-weight:600;margin-bottom:9px">Itens da nota</div>
 
     <div class="fld"><label>Produto</label>
       <input id="lmProd" list="lmLista" autocomplete="off" placeholder="digite o código ou parte da descrição">
@@ -816,19 +835,11 @@ async function lancamentoManual(){
       <div class="fld" id="lmWrapNovo" style="display:none;min-width:180px"><label>Número do lote</label>
         <input id="lmLoteNovo" placeholder="ex.: 263021344"></div>
       <div class="fld"><label>Quantidade</label><input id="lmQtd" type="number" step="0.0001" placeholder="0"></div>
+      <div class="fld" style="align-self:flex-end"><button class="btn gh" id="lmAdd">+ Adicionar item</button></div>
     </div>
 
-    <div class="fld"><label>Cliente / origem</label><input id="lmCli" placeholder="opcional"></div>
-    <div class="fld"><label>Observação</label><textarea id="lmObs" rows="2" placeholder="opcional, mas ajuda na auditoria"></textarea></div>
-
-    <div class="fld" id="lmWrapCc"><label style="font-weight:400">
-      <input type="checkbox" id="lmCc" style="width:auto;margin-right:7px" checked>
-      Venda original anterior ao Marco Zero — <b>não abater do consumo</b></label>
-      <div style="font-size:11.5px;color:var(--tx3);margin-top:4px">A saída nunca foi contada pelo sistema.
-        Se a devolução abatesse o consumo, o consumo médio ficaria menor que a realidade e a cobertura, maior.</div></div>
-
-    <div id="lmPrev" style="margin:12px 0;font-size:13px"></div>
-    <button class="btn" id="lmOk">Lançar movimento</button>`);
+    <div id="lmTabela" style="margin:14px 0"></div>
+    <button class="btn" id="lmOk" disabled>Lançar nota</button>`);
 
   const $$ = sel => m.querySelector(sel);
   let produto = null;
@@ -851,12 +862,34 @@ async function lancamentoManual(){
     sel.onchange();
   };
 
+  const desenharTabela = () => {
+    const t = $$('#lmTipo').value;
+    const totQ = itens.reduce((a,i)=>a+i.quantidade, 0);
+    $$('#lmTabela').innerHTML = !itens.length
+      ? `<div class="empty" style="padding:16px;font-size:12.5px">Nenhum item ainda. Escolha produto, lote e quantidade e clique em <b>+ Adicionar item</b>.</div>`
+      : `<div class="panel"><div class="pb flush"><table>
+          <thead><tr><th>Código</th><th>Descrição</th><th>Lote</th><th class="num">Quantidade</th><th></th></tr></thead>
+          <tbody>${itens.map((i,ix)=>`<tr>
+            <td class="mono">${esc(i.sku)}</td><td>${esc(i.descricao)}</td>
+            <td class="mono">${esc(i.numero_lote)}</td>
+            <td class="num ${t==='SAIDA'?'neg':'pos'}">${t==='SAIDA'?'−':'+'}${nf(i.quantidade)} ${esc(i.unidade||'')}</td>
+            <td><button class="btn sm gh" data-rm="${ix}">remover</button></td></tr>`).join('')}
+          </tbody>
+          <tfoot><tr><td colspan="3"><b>${itens.length} ${itens.length===1?'item':'itens'}</b></td>
+            <td class="num"><b>${nf(totQ)}</b></td><td></td></tr></tfoot>
+        </table></div></div>`;
+    $$('#lmTabela').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+      itens.splice(Number(b.dataset.rm), 1); desenharTabela();
+    });
+    $$('#lmOk').disabled = !itens.length;
+    $$('#lmOk').textContent = itens.length ? `Lançar nota — ${itens.length} ${itens.length===1?'item':'itens'}` : 'Lançar nota';
+  };
+
   $$('#lmProd').oninput = () => {
     produto = acharProd($$('#lmProd').value);
     $$('#lmInfo').innerHTML = produto
       ? `<span class="pos">✔</span> ${esc(produto.sku)} — ${esc(produto.descricao)} (${esc(produto.unidade)})`
       : ($$('#lmProd').value.trim() ? '<span class="neg">nenhum produto encontrado</span>' : '');
-    previa();
   };
   $$('#lmProd').onchange = async () => { $$('#lmProd').oninput(); await carregarLotes(); };
   $$('#lmLote').onchange = () => {
@@ -864,18 +897,10 @@ async function lancamentoManual(){
   };
   $$('#lmTipo').onchange = () => {
     $$('#lmWrapCc').style.display = $$('#lmTipo').value === 'DEVOLUCAO' ? '' : 'none';
-    previa();
+    desenharTabela();
   };
 
-  const previa = () => {
-    const q = Number($$('#lmQtd').value||0), t = $$('#lmTipo').value;
-    $$('#lmPrev').innerHTML = (produto && q > 0)
-      ? `<span class="tag ${t==='SAIDA'?'t-bad':'t-ok'}">${t==='SAIDA'?'−':'+'}${nf(q)} ${esc(produto.unidade)}</span>
-         <span class="mut"> no saldo de ${esc(produto.sku)}</span>` : '';
-  };
-  $$('#lmQtd').oninput = previa;
-
-  $$('#lmOk').onclick = async () => {
+  $$('#lmAdd').onclick = () => {
     if(!produto) return toast('Escolha um produto válido.', 'err');
     const q = Number($$('#lmQtd').value||0);
     if(!(q > 0)) return toast('Informe a quantidade.', 'err');
@@ -883,23 +908,46 @@ async function lancamentoManual(){
     const lote = loteSel === '__novo__' ? ($$('#lmLoteNovo').value||'').trim() : loteSel;
     if(!lote) return toast('Informe o lote.', 'err');
 
+    const igual = itens.find(i => i.product_id === produto.id && i.numero_lote === lote);
+    if(igual){
+      igual.quantidade += q;                       // mesma linha duas vezes: soma em vez de duplicar
+      toast(`Somado ao item que já estava na nota: ${nf(igual.quantidade)}.`);
+    } else {
+      itens.push({ product_id: produto.id, sku: produto.sku, descricao: produto.descricao,
+                   unidade: produto.unidade, numero_lote: lote, quantidade: q });
+    }
+    // limpa só o item, mantém o cabeçalho
+    $$('#lmProd').value = ''; $$('#lmQtd').value = ''; $$('#lmLoteNovo').value = '';
+    $$('#lmInfo').innerHTML = ''; produto = null;
+    $$('#lmLote').innerHTML = '<option value="">— escolha o produto primeiro —</option>';
+    $$('#lmWrapNovo').style.display = 'none';
+    desenharTabela();
+    $$('#lmProd').focus();
+  };
+  // Enter na quantidade adiciona o item, sem tirar a mão do teclado
+  $$('#lmQtd').onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); $$('#lmAdd').click(); } };
+
+  $$('#lmOk').onclick = async () => {
+    if(!itens.length) return toast('Adicione pelo menos um item.', 'err');
     const tipo = $$('#lmTipo').value;
     $$('#lmOk').disabled = true;
-    const { data, error } = await sb.rpc('fn_lancar_movimento', {
-      p_product: produto.id, p_tipo: tipo, p_quantidade: q,
-      p_data: $$('#lmData').value, p_numero_lote: lote, p_armazem: '2',
-      p_documento: $$('#lmDoc').value || null, p_cliente: $$('#lmCli').value || null,
+    const { data, error } = await sb.rpc('fn_lancar_nota_manual', {
+      p_tipo: tipo, p_data: $$('#lmData').value,
+      p_documento: $$('#lmDoc').value || null,
+      p_cliente: $$('#lmCli').value || null,
       p_observacao: $$('#lmObs').value || null,
-      p_conta_consumo: (tipo === 'DEVOLUCAO' && $$('#lmCc').checked) ? false : null });
-
+      p_conta_consumo: (tipo === 'DEVOLUCAO' && $$('#lmCc').checked) ? false : null,
+      p_itens: itens.map(i => ({ product_id: i.product_id, numero_lote: i.numero_lote,
+                                 quantidade: i.quantidade, armazem: '2' })) });
     $$('#lmOk').disabled = false;
-    if(error) return err(error);
-    if(!data.ok) return toast(data.erro, 'err');
-    await registrarCausaNeg('lancamento_manual', `${tipo} ${nf(q)} em ${produto.sku}`);
+    if(error) return err(error);          // nenhum item entrou: a função é tudo ou nada
+    await registrarCausaNeg('lancamento_manual', `${tipo} · ${data.itens} itens · NF ${$$('#lmDoc').value||'sem nota'}`);
     m.remove();
-    toast(`Lançado: ${tipo==='SAIDA'?'−':'+'}${nf(q)} em ${produto.sku} (${money(data.valor)}).`);
+    toast(`Nota lançada: ${data.itens} ${data.itens===1?'item':'itens'}, ${nf(data.quantidade_total)} no total (${money(data.valor_total)}).`);
     route();
   };
+
+  desenharTabela();
 }
 
 window.lancamentoManual = lancamentoManual;
