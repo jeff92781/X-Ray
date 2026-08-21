@@ -144,6 +144,9 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
 .hint{background:rgba(74,158,255,.07);border:1px solid rgba(74,158,255,.22);border-radius:9px;padding:12px 14px;font-size:12.5px;color:var(--tx2);margin-bottom:16px}
 .hint b{color:var(--tx)}
 .chartbox{height:270px;position:relative}
+.cnLinha{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.cnLinha:last-child{border-bottom:0}
+.cnLinha .cresce{flex:1}
 .busca{padding:12px 12px 6px;position:relative}
 .busca input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:12.5px;outline:none}
 .busca input:focus{border-color:var(--ac)}
@@ -189,7 +192,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.9</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v5.0</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +207,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.9';
+const VERSAO = 'v5.0';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -732,11 +735,35 @@ ROUTES.movimentos = async () => {
     <div class="fld"><label>Até</label><input id="ate" type="date"></div>
     <div class="fld"><label>&nbsp;</label><button class="btn sm" id="go">Filtrar</button></div>
   </div>
+  <div id="fantasmas"></div>
   <div class="panel"><div class="pb flush"><div class="scroll"><table>
     <thead><tr><th>Data</th><th>Tipo</th><th>Documento</th><th>Produto</th><th>Lote</th>
       <th class="num">Qtd</th><th class="num">Valor custo</th><th>Cliente / origem</th><th>Situação</th><th>Ação</th></tr></thead>
     <tbody id="tb"><tr><td colspan="10" class="load"><span class="spin"></span>Carregando…</td></tr></tbody>
   </table></div></div></div>`;
+
+  // produtos que a importação criou sozinha e que se parecem com um código já existente:
+  // é a assinatura de código digitado errado
+  sb.rpc('fn_produtos_auto_importados').then(({ data }) => {
+    const susp = (data||[]).filter(p => p.parecido_com && Number(p.movimentos) > 0);
+    if(!susp.length || !$('#fantasmas')) return;
+    $('#fantasmas').innerHTML = `<div class="panel" style="border-color:rgba(210,153,34,.4)">
+      <div class="ph"><h3>Códigos que parecem digitação errada</h3>
+        <span class="tag t-warn">${nf(susp.length)}</span></div>
+      <div class="pb"><div style="color:var(--tx2);font-size:12.5px;margin-bottom:10px">
+        A importação aceita código desconhecido de propósito, para não travar a rotina — mas então cria um produto
+        que não existe. Abaixo, os que a importação criou e que se parecem com um código já cadastrado.
+        Filtre pelo código para achar o movimento e use <b>Trocar produto</b>.</div>
+      ${susp.map(p=>`<div class="cnLinha">
+        <div class="cresce"><b class="mono">${esc(p.sku)}</b> — ${esc(p.descricao||'')}
+          <div style="color:var(--tx3);font-size:11.5px">${nf(p.movimentos)} movimento(s) · saldo ${nf(p.saldo)}
+            · parece <b class="mono">${esc(p.parecido_com)}</b></div></div>
+        <button class="btn sm gh" data-fsku="${esc(p.sku)}">filtrar</button></div>`).join('')}
+      </div></div>`;
+    $('#fantasmas').querySelectorAll('[data-fsku]').forEach(b => b.onclick = () => {
+      $('#q').value = b.dataset.fsku; load();
+    });
+  }).catch(()=>{});
   let rows = [];
   const load = async () => {
     let q = sb.from('stock_movements')
@@ -792,11 +819,14 @@ ROUTES.movimentos = async () => {
            r.status_transito==='DIVERGENTE'?'<span class="tag t-bad">receb. divergente</span>':
            r.reverses_movement_id?`<span class="tag t-info">${esc(r.motivo||'estorno')}</span>`:
            '<span class="tag t-ok">efetivado</span>'}</td>
-      <td>${ revertidos.has(r.id)
+      <td style="white-space:nowrap">${ revertidos.has(r.id)
         ? `<span class="tag t-info">${esc(revertidos.get(r.id).motivo||'revertida')}</span>`
         : (['SAIDA','TRANSF_SAIDA'].includes(r.tipo) && !r.voided_at && can('admin','auditor')) ? `
         <button class="btn sm gh" onclick="reverter('${r.id}','DEVOLUCAO','${esc(r.products?.sku||'')}',${r.quantidade},'${esc(r.documento||'')}')">Devolução</button>
-        <button class="btn sm gh" onclick="reverter('${r.id}','CANCELAMENTO','${esc(r.products?.sku||'')}',${r.quantidade},'${esc(r.documento||'')}')">Cancelar</button>` : ''}</td>
+        <button class="btn sm gh" onclick="reverter('${r.id}','CANCELAMENTO','${esc(r.products?.sku||'')}',${r.quantidade},'${esc(r.documento||'')}')">Cancelar</button>` : ''}
+        ${(!r.voided_at && !revertidos.has(r.id) && can('admin','auditor'))
+          ? `<button class="btn sm gh" title="lançado no código errado"
+               onclick="trocarProduto('${r.id}','${esc(r.products?.sku||'')}','${esc(r.lots?.numero_lote||'')}',${r.quantidade},'${esc(r.tipo)}','${esc(r.documento||'')}')">Trocar produto</button>` : ''}</td>
     </tr>`).join('') : '<tr><td colspan="10" class="empty">Nenhuma movimentação. Comece pela Importação.</td></tr>';
   };
   $('#go').onclick = load;
@@ -980,6 +1010,87 @@ async function lancamentoManual(){
 }
 
 window.lancamentoManual = lancamentoManual;
+
+/* Trocar o produto de um movimento lançado no código errado.
+   Não reescreve o movimento: estorna o errado e faz nascer o equivalente no produto
+   certo. Os dois continuam no Kardex — e o valor muda, porque o produto fantasma
+   criado pela importação costuma entrar com custo zero. */
+window.trocarProduto = async (movId, skuAtual, lote, qtd, tipo, doc) => {
+  const prods = await fetchAll(() => sb.from('products')
+    .select('id,sku,descricao,unidade,custo_unitario,status').order('sku'));
+  const atual = prods.find(p => p.sku === skuAtual);
+  const parecidos = prods.filter(p => p.sku !== skuAtual && p.status !== 'inativo' &&
+    (p.sku.startsWith(skuAtual) || skuAtual.startsWith(p.sku)));
+
+  const m = modal(`Trocar produto — ${skuAtual}`, `
+    <div class="hint">O movimento errado é <b>estornado</b> e um equivalente nasce no produto certo, com a
+    mesma data, nota, lote e quantidade. Os dois continuam no Kardex — nada é apagado. O <b>valor muda</b>,
+    porque o produto vai passar a usar o custo do código correto.</div>
+    <dl class="kv" style="margin-bottom:14px">
+      <dt>Movimento</dt><dd>${esc(tipo)} de <b>${nf(qtd)}</b>${doc?` · NF <span class="mono">${esc(doc)}</span>`:''}</dd>
+      <dt>Lote</dt><dd class="mono">${esc(lote||'—')}</dd>
+      <dt>Código atual</dt><dd class="mono">${esc(skuAtual)}${atual&&atual.status==='auto_importado'
+        ?' <span class="tag t-warn">criado pela importação</span>':''}</dd>
+    </dl>
+    ${parecidos.length?`<div class="fld"><label>Códigos parecidos</label>
+      <div>${parecidos.slice(0,6).map(p=>`<button class="btn sm gh" data-sug="${esc(p.sku)}"
+        style="margin:0 6px 6px 0">${esc(p.sku)}</button>`).join('')}</div></div>`:''}
+    <div class="fld"><label>Código correto</label>
+      <input id="tpProd" list="tpLista" autocomplete="off" placeholder="digite o código correto">
+      <datalist id="tpLista">${prods.filter(p=>p.status!=='inativo').map(p=>
+        `<option value="${esc(p.sku)}">${esc(p.descricao)}</option>`).join('')}</datalist>
+      <div id="tpInfo" style="font-size:11.5px;color:var(--tx3);margin-top:4px"></div></div>
+    <div class="fld"><label>Motivo <span style="color:var(--bad)">*</span></label>
+      <select id="tpMotivo">
+        <option>Código digitado errado no lançamento</option>
+        <option>Código truncado no arquivo do ERP</option>
+        <option>Produto trocado na conferência</option>
+        <option>Outro (descrever abaixo)</option>
+      </select></div>
+    <div class="fld"><label>Observação</label><textarea id="tpObs" rows="2" placeholder="opcional"></textarea></div>
+    <div id="tpPrev" style="margin:12px 0;font-size:13px"></div>
+    <button class="btn" id="tpOk" disabled>Trocar produto</button>`);
+
+  const $$ = q => m.querySelector(q);
+  let destino = null;
+  const achar = txt => {
+    const t = (txt||'').trim().toLowerCase(); if(!t) return null;
+    return prods.find(p => p.sku.toLowerCase() === t)
+        || prods.find(p => p.sku.toLowerCase().startsWith(t) && p.status !== 'inativo') || null;
+  };
+  const prev = () => {
+    destino = achar($$('#tpProd').value);
+    const ok = destino && destino.sku !== skuAtual;
+    $$('#tpInfo').innerHTML = !destino
+      ? ($$('#tpProd').value.trim() ? '<span class="neg">nenhum produto encontrado</span>' : '')
+      : destino.sku === skuAtual ? '<span class="neg">é o mesmo código do movimento</span>'
+      : `<span class="pos">✔</span> ${esc(destino.sku)} — ${esc(destino.descricao)}`;
+    $$('#tpPrev').innerHTML = ok
+      ? `<span class="tag t-mut">${esc(skuAtual)}</span> → <span class="tag t-ok">${esc(destino.sku)}</span>
+         &nbsp;<span class="mut">${nf(qtd)} ${esc(destino.unidade||'')} no lote ${esc(lote||'—')}</span>`
+      : '';
+    $$('#tpOk').disabled = !ok;
+  };
+  $$('#tpProd').oninput = prev;
+  m.querySelectorAll('[data-sug]').forEach(b => b.onclick = () => { $$('#tpProd').value = b.dataset.sug; prev(); });
+  prev();
+
+  $$('#tpOk').onclick = async () => {
+    if(!destino) return;
+    const mot = $$('#tpMotivo').value, obs = $$('#tpObs').value;
+    if(mot.startsWith('Outro') && !obs.trim()) return toast('Descreva o motivo na observação.', 'err');
+    $$('#tpOk').disabled = true;
+    const { data, error } = await sb.rpc('fn_corrigir_produto_movimento', {
+      p_movement: movId, p_product_destino: destino.id,
+      p_motivo: obs ? `${mot} — ${obs}` : mot });
+    $$('#tpOk').disabled = false;
+    if(error) return err(error);
+    m.remove();
+    toast(`${nf(data.quantidade)} movido de ${data.de} para ${data.para}. Valor: ${money(data.valor_antes)} → ${money(data.valor_depois)}.`
+      + (data.produto_origem_inativado ? ` O código ${data.de} ficou sem movimento e foi inativado.` : ''));
+    route();
+  };
+};
 
 window.reverter = (id, acao, sku, qtdMax, docOriginal) => {
   const ehDev = acao === 'DEVOLUCAO';
