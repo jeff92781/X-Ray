@@ -189,7 +189,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
         <circle cx="11.4" cy="10.6" r="3.1"/>
         <path d="m13.7 12.9 2.6 2.6"/>
       </svg>
-      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.8</b></span></div>
+      <div><b>X-RAY</b><span>Estoque · Filial 114 · <b id='ver'>v4.9</b></span></div>
     </div>
     <div class="busca"><input id="gbusca" autocomplete="off" placeholder="Buscar produto, lote ou NF…">
       <div class="gres" id="gres"></div></div>
@@ -204,7 +204,7 @@ tbody tr:hover{background:rgba(255,255,255,.022)}
    RAIO-X DO ESTOQUE — Fase 1
    Front-end sem build. Toda agregação vem pronta do PostgreSQL.
    ========================================================= */
-const VERSAO = 'v4.8';
+const VERSAO = 'v4.9';
 const CFG = {
   url: 'https://egshgwnnaxfvtxwvgnnh.supabase.co',
   key: 'sb_publishable_3NKwsqk08jXGBBiTRX--yw_MLNpP7Bh',
@@ -469,11 +469,20 @@ ROUTES.dashboard = async () => {
     ${card('Parado > 30 dias', money(k.parado_30_valor), `${nf(k.parado_30_lotes)} lotes`, k.parado_30_valor>0?'warn':'')}
     ${card('Sem inventário', nf(k.sem_inventario_30), 'lotes com saldo há mais de 30 dias', k.sem_inventario_30>0?'warn':'')}
     ${card('Ajustes no mês', nf(k.ajustes_mes), 'movimentos de ajuste')}
-    ${card('Perdas no mês', money(k.perdas_mes), 'ajustes negativos, sem sucata', k.perdas_mes>0?'bad':'')}
+    ${card('Ajustes negativos', money(k.perdas_mes), 'faltou no chão · sem sucata', k.perdas_mes>0?'bad':'')}
+    ${card('Ajustes positivos', money(k.ganhos_mes), 'sobrou no chão · sem sucata', k.ganhos_mes>0?'warn':'')}
     ${card('Sucata no mês', nf(k.sucata_mes_qtd), `${money(k.sucata_mes_valor)}${k.sucata_mes_taxa!==null&&k.sucata_mes_taxa!==undefined?` · ${nf(k.sucata_mes_taxa,2)}% das saídas`:''}`, k.sucata_mes_qtd>0?'info':'')}
+    ${card('Resultado dos ajustes', money(k.liquido_mes), 'positivos − negativos − sucata', k.liquido_mes<0?'bad':'ok')}
     ${card('Em trânsito', nf(k.em_transito_qtd), `${money(k.em_transito_valor)} aguardando recebimento`, k.em_transito_qtd>0?'info':'')}
     ${card('Saldos negativos', nf(k.saldo_negativo), 'saída sem entrada correspondente', k.saldo_negativo>0?'bad':'')}
   </div>
+
+  ${Math.abs(Number(k.liquido_mes||0)) > 0 ? `<div class="hint" style="margin-bottom:18px">
+    <b>Resultado positivo não é lucro.</b> Ele diz que o chão tinha mais material do que o razão sabia —
+    quase sempre nota de entrada que não foi lançada. Resultado negativo é o contrário: saiu material que o
+    sistema não viu. Nos dois casos o que se mede é <b>erro de registro</b>; só depois de eliminar as notas
+    faltantes é que a sobra restante vira ganho de verdade e a falta vira perda de verdade.
+    ${Number(k.ganhos_mes||0) > Number(k.perdas_mes||0)*1.5 ? '<br><br>Hoje os positivos estão bem acima dos negativos — o caminho é procurar as entradas que faltaram, não comemorar a sobra.' : ''}</div>` : ''}
 
   ${(k.estoque_qtd==0 && k.itens_divergentes>0) ? `<div class="panel" style="border-color:rgba(210,153,34,.4)">
     <div class="pb"><b style="color:var(--warn)">O saldo do sistema está zerado, então tudo aparece como divergente.</b>
@@ -2438,9 +2447,11 @@ ROUTES.ajustes = async () => {
 
   const mesAtual = new Date().toISOString().slice(0,7);
   const doMes = data.filter(a => a.movement_date.slice(0,7) === mesAtual);
-  const pos = doMes.filter(a=>a.sinal>0), neg = doMes.filter(a=>a.sinal<0 && !a.eh_sucata);
+  const pos = doMes.filter(a=>a.sinal>0 && !a.eh_sucata), neg = doMes.filter(a=>a.sinal<0 && !a.eh_sucata);
   const suc = doMes.filter(a=>a.eh_sucata);
-  const soma = arr => arr.reduce((s,a)=>s+Number(a.valor_custo),0);
+  // o balanço vem do banco, para dashboard e esta tela nunca discordarem
+  const balMeses = await sb.rpc('fn_balanco_ajustes', { p_meses: 12 }).then(r => r.data || []);
+  const bal = balMeses[0] || { positivos:0, negativos:0, sucata:0, liquido:0 };
 
   const porMotivo = {}; data.forEach(a => {
     const k=a.motivo; porMotivo[k] = porMotivo[k] || {qtd:0, valor:0, itens:0};
@@ -2460,12 +2471,15 @@ ROUTES.ajustes = async () => {
   <div class="cards">
     <div class="card"><div class="lb">Ajustes no mês</div><div class="vl">${nf(doMes.length)}</div>
       <div class="ft">${nf(pos.length)} positivos · ${nf(neg.length)} negativos</div></div>
-    <div class="card bad"><div class="lb">Perdas no mês</div><div class="vl" style="font-size:19px">${money(soma(neg))}</div>
-      <div class="ft">sem sucata</div></div>
-    <div class="card info"><div class="lb">Sucata no mês</div><div class="vl" style="font-size:19px">${money(soma(suc))}</div>
-      <div class="ft"><a style="cursor:pointer" onclick="location.hash='sucata'">ver indicador</a></div></div>
-    <div class="card warn"><div class="lb">Sobras no mês</div><div class="vl" style="font-size:19px">${money(soma(pos))}</div></div>
-    <div class="card"><div class="lb">Impacto líquido</div><div class="vl" style="font-size:19px">${money(soma(pos)-soma(neg))}</div></div>
+    <div class="card bad"><div class="lb">Ajustes negativos</div><div class="vl" style="font-size:19px">${money(bal.negativos)}</div>
+      <div class="ft">faltou no chão · sem sucata</div></div>
+    <div class="card warn"><div class="lb">Ajustes positivos</div><div class="vl" style="font-size:19px">${money(bal.positivos)}</div>
+      <div class="ft">sobrou no chão · sem sucata</div></div>
+    <div class="card info"><div class="lb">Sucata no mês</div><div class="vl" style="font-size:19px">${money(bal.sucata)}</div>
+      <div class="ft">líquida de correções · <a style="cursor:pointer" onclick="location.hash='sucata'">ver indicador</a></div></div>
+    <div class="card ${Number(bal.liquido)<0?'bad':'ok'}"><div class="lb">Resultado do mês</div>
+      <div class="vl" style="font-size:19px">${money(bal.liquido)}</div>
+      <div class="ft">positivos − negativos − sucata</div></div>
     <div class="card"><div class="lb">Ajustes em 12 meses</div><div class="vl">${nf(data.length)}</div></div>
   </div>
   ${data.length ? `
@@ -2475,6 +2489,25 @@ ROUTES.ajustes = async () => {
     <div class="panel" style="margin:0"><div class="ph"><h3>Valor por motivo</h3></div>
       <div class="pb"><div class="chartbox"><canvas id="c2"></canvas></div></div></div>
   </div>
+  <div class="panel"><div class="ph"><h3>Balanço mês a mês</h3>
+    <span class="sub">os três baldes não se sobrepõem — dá para somar sem contar duas vezes</span></div>
+    <div class="pb flush"><table>
+    <thead><tr><th>Mês</th><th class="num">Positivos</th><th class="num">Negativos</th>
+      <th class="num">Sucata</th><th class="num">Resultado</th><th class="num">Lançamentos</th></tr></thead>
+    <tbody>${balMeses.map(b=>`<tr>
+      <td>${dt(b.mes).slice(3)}</td>
+      <td class="num pos">${money(b.positivos)}</td>
+      <td class="num neg">${money(b.negativos)}</td>
+      <td class="num">${money(b.sucata)}</td>
+      <td class="num ${Number(b.liquido)<0?'neg':'pos'}"><b>${money(b.liquido)}</b></td>
+      <td class="num mut">${nf(Number(b.n_positivos)+Number(b.n_negativos)+Number(b.n_sucata))}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="pb" style="font-size:11.5px;color:var(--tx3);border-top:1px solid var(--line)">
+      <b>Resultado = positivos − negativos − sucata.</b> A sucata sai do balde de negativos de propósito: é perda
+      conhecida, que vira dinheiro de volta na venda do retalho. Cuidado ao conferir por fora: se somar a sucata
+      outra vez em cima dos negativos de cada inventário, ela entra duas vezes e o resultado sai menor do que é.</div>
+  </div>
+
   <div class="panel"><div class="ph"><h3>Por motivo</h3><span class="sub">últimos 12 meses</span></div>
     <div class="pb flush"><table>
     <thead><tr><th>Motivo</th><th class="num">Ocorrências</th><th class="num">Quantidade</th><th class="num">Valor</th></tr></thead>
@@ -2503,10 +2536,12 @@ ROUTES.ajustes = async () => {
 
   if(!data.length) return;
   const eixo = { ticks:{color:'#8b98a9'}, grid:{color:'#242e3b'} };
+  const bm = [...balMeses].reverse();   // do mais antigo para o mais novo
   new Chart($('#c1'), { type:'bar',
-    data:{ labels: meses.map(m=>dt(m).slice(3)), datasets:[
-      { label:'Sobras', data: meses.map(m=>porMes[m].pos), backgroundColor:'#d29922' },
-      { label:'Perdas', data: meses.map(m=>porMes[m].neg), backgroundColor:'#f85149' }]},
+    data:{ labels: bm.map(b=>dt(b.mes).slice(3)), datasets:[
+      { label:'Positivos', data: bm.map(b=>Number(b.positivos)), backgroundColor:'#d29922' },
+      { label:'Negativos', data: bm.map(b=>Number(b.negativos)), backgroundColor:'#f85149' },
+      { label:'Sucata',    data: bm.map(b=>Number(b.sucata)),    backgroundColor:'#a371f7' }]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8b98a9'}}},
       scales:{ x:{...eixo, stacked:true}, y:{...eixo, stacked:true} } } });
   const mot = Object.entries(porMotivo).sort((a,b)=>Math.abs(b[1].valor)-Math.abs(a[1].valor)).slice(0,8);
